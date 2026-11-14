@@ -13,8 +13,6 @@ In Claude Code:
 /plugin marketplace add gparadelo/video-translator
 /plugin install video-translator@video-translator
 ```
-The repository is private: you need to be invited as a collaborator, and git on your machine must be signed in to GitHub (`gh auth login` is the easiest way).
-
 Claude Code then asks for your **ElevenLabs API key** (stored in your system keychain, never in a file), your **voice ID**, and your **jobs folder** (where your videos live). You can change them later in `/plugin` → video-translator → Configure.
 
 Run `/video-translator:setup` to check everything is in place.
