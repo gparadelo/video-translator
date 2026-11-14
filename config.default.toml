@@ -1,0 +1,33 @@
+# Default settings. Don't edit this file in the plugin: copy it to config.toml in your jobs folder
+# and keep only the keys you want to change.
+
+# Languages every video gets translated into (the base language is skipped automatically).
+languages = ["en", "es", "de", "fr", "it"]
+
+[elevenlabs]
+# Use the same model and settings you use in the ElevenLabs app.
+model_id = "eleven_multilingual_v2"
+output_format = "mp3_44100_128"
+
+[elevenlabs.voice_settings]
+stability = 0.5
+similarity_boost = 0.75
+style = 0.0
+use_speaker_boost = true
+speed = 1.0            # default TTS speed; individual beats can override it (0.7 - 1.2)
+
+[fit]
+video_speed_min = 0.90 # clips may be slowed down to 90%...
+video_speed_max = 1.10 # ...or sped up to 110%
+trim_keep_min = 0.40   # a clip may be trimmed (tail cut off) down to 40% of its length
+audio_tempo_min = 0.96 # voice may be slowed by up to 4% after generation...
+audio_tempo_max = 1.07 # ...or sped up by up to 7%
+sync_tolerance = 0.25  # seconds a cut may land away from its word
+pause_min = 0.10       # shortest pause between beats (seconds)
+pause_max_extra = 0.40 # pauses between beats may grow by this much
+scene_threshold = 0.20 # cut detection sensitivity (lower = more cuts)
+
+[render]
+video_codec = "hevc_videotoolbox"
+video_bitrate = "20M"
+audio_bitrate = "192k"

@@ -1,0 +1,12 @@
+{
+  "name": "video-translator",
+  "description": "Video Translator plugin for Claude Code",
+  "owner": { "name": "Gonzalo Paradelo" },
+  "plugins": [
+    {
+      "name": "video-translator",
+      "source": "./",
+      "description": "Translate a short-form voiceover video into other languages with your ElevenLabs voice."
+    }
+  ]
+}
