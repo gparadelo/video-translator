@@ -152,15 +152,15 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
 
   <section>
     <h2>Translate a video</h2>
-    <p>For each video, make a folder inside your jobs folder with two files:</p>
+    <p>For each video, make a folder inside your jobs folder and put the finished video in it:</p>
 <pre class="tree">Documents/Video Translations/
 └── summer-ad/
-    ├── base.mp4      <span class="c"># the finished video (any single .mp4 or .mov)</span>
-    └── script.txt    <span class="c"># the exact voiceover text</span></pre>
-    <p>In <code>script.txt</code>, write the voiceover exactly as it's spoken, with a blank line between each sentence or beat. Then, in Claude Code:</p>
+    └── base.mp4      <span class="c"># the finished video (any single .mp4 or .mov)</span></pre>
+    <p>Then, in Claude Code:</p>
     <div class="cmd"><pre>/video-translator:translate summer-ad</pre><button type="button" data-copy>Copy</button></div>
-    <p class="hint">This translates into the default languages (English, Spanish, German, French and Italian, minus the original). To pick languages, add them after the name: <code>/video-translator:translate summer-ad de fr</code>.</p>
-    <p>Results appear in <code>summer-ad/out/</code>: one video and one report per language. The report lists any cut that didn't land quite on its word, so you know where to look.</p>
+    <p class="hint">This translates into the default languages (English, Spanish, German, French and Italian, minus the original). To pick languages, add their 2-letter codes after the name, for example <code>/video-translator:translate summer-ad nl pt</code> for Dutch and Portuguese.</p>
+    <p>The voiceover is transcribed into <code>script.txt</code> and its language is detected, so you don't need to write anything. If you have a written script, you can put it in the folder as <code>script_original.txt</code>; it's only used to spell names correctly.</p>
+    <p>Results appear in <code>summer-ad/out/</code>: one video per language. Claude tells you if any cut didn't land quite on its word, and at what time, so you know where to look.</p>
   </section>
 
   <section>
@@ -168,6 +168,7 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
     <div class="qa">
       <div><b>A cut is detected in the wrong place</b><span>Edit <code>cuts.txt</code> in the video's folder (one time in seconds per line), then ask Claude to run the translation again. You can also add a time to sync something inside a clip, like the moment a light changes colour.</span></div>
       <div><b>It costs ElevenLabs credits</b><span>Each beat is voiced once and cached, so re-running only pays for the sentences that changed.</span></div>
+      <div><b>Changing the default languages</b><span>Create a file named <code>config.toml</code> in your jobs folder with one line, for example <code>languages = ["en", "es", "de", "fr", "it", "nl"]</code>.</span></div>
       <div><b>A different voice for one language</b><span>Create a file named <code>.env</code> in your jobs folder containing a line like <code>ELEVENLABS_VOICE_ID_DE=your-german-voice-id</code>.</span></div>
       <div><b>Getting updates</b><span>Run both commands, then start a new Claude Code session.</span>
         <div class="cmd" style="margin-top:6px"><pre>claude plugin marketplace update video-translator</pre><button type="button" data-copy>Copy</button></div>

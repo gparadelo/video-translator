@@ -80,11 +80,12 @@ def setup_status() -> str:
 
 
 @mcp.tool()
-def analyze(job: str, base_lang: str) -> str:
-    """Align the base voiceover to script.txt, detect cuts (writes cuts.txt if missing) and write
+def analyze(job: str, base_lang: str = "") -> str:
+    """Prepare a job: if there is no script.txt, transcribe the voiceover and write one (detecting the
+    language); align the voiceover to the script, detect cuts (writes cuts.txt if missing) and write
     work/analysis.json plus work/translate_brief.md. `job` is a job folder name or path; `base_lang`
-    is the language of the original voiceover (e.g. "es")."""
-    return _run(vt.cmd_analyze, job=job, lang=base_lang)
+    is the original voiceover's language (e.g. "es"), optional when the script is transcribed."""
+    return _run(vt.cmd_analyze, job=job, lang=base_lang or None)
 
 
 @mcp.tool()
@@ -96,7 +97,7 @@ def tts(job: str, lang: str) -> str:
 
 @mcp.tool()
 def plan(job: str, lang: str) -> str:
-    """Fit the video clips to the new voiceover and write out/<job>_<lang>_report.md. Lines starting
+    """Fit the video clips to the new voiceover and write work/<lang>/report.md. Lines starting
     with '!' are problems to fix in script.json before rendering."""
     return _run(vt.cmd_plan, job=job, lang=lang)
 

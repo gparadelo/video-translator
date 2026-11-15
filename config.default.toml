@@ -8,6 +8,7 @@ languages = ["en", "es", "de", "fr", "it"]
 # Use the same model and settings you use in the ElevenLabs app.
 model_id = "eleven_multilingual_v2"
 output_format = "mp3_44100_128"
+stt_model = "scribe_v2" # transcribes the voiceover when a job has no script.txt
 
 [elevenlabs.voice_settings]
 stability = 0.5
@@ -26,6 +27,7 @@ sync_tolerance = 0.25  # seconds a cut may land away from its word
 pause_min = 0.10       # shortest pause between beats (seconds)
 pause_max_extra = 0.40 # pauses between beats may grow by this much
 scene_threshold = 0.20 # cut detection sensitivity (lower = more cuts)
+beat_pause = 1.0       # transcribed script: one beat per sentence; this much silence mid-sentence also splits
 
 [render]
 video_codec = "hevc_videotoolbox"

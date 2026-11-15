@@ -213,17 +213,77 @@ def forced_align(audio: Path, text: str) -> dict:
     return r.json()
 
 
+# ElevenLabs speech-to-text reports ISO 639-3 codes; the rest of the tool uses the 2-letter ones.
+ISO3_TO_2 = {"spa": "es", "eng": "en", "deu": "de", "ger": "de", "fra": "fr", "fre": "fr", "ita": "it",
+             "nld": "nl", "dut": "nl", "por": "pt", "pol": "pl", "swe": "sv", "dan": "da", "nor": "no",
+             "nob": "no", "fin": "fi", "tur": "tr", "jpn": "ja", "kor": "ko", "zho": "zh", "chi": "zh",
+             "cmn": "zh", "ara": "ar", "hin": "hi", "rus": "ru", "ukr": "uk", "ces": "cs", "cze": "cs",
+             "ron": "ro", "rum": "ro", "ell": "el", "gre": "el", "hun": "hu", "cat": "ca", "glg": "gl"}
+
+
+def transcribe(audio: Path, cfg: dict) -> dict:
+    with open(audio, "rb") as f:
+        r = requests.post(f"{API}/v1/speech-to-text", headers={"xi-api-key": env("ELEVENLABS_API_KEY")},
+                          files={"file": (audio.name, f, "audio/mp4")},
+                          data={"model_id": cfg["elevenlabs"].get("stt_model", "scribe_v2"),
+                                "tag_audio_events": "false", "timestamps_granularity": "word"},
+                          timeout=600)
+    if r.status_code != 200:
+        die(f"transcription failed ({r.status_code}): {r.text[:500]}")
+    return r.json()
+
+
+def script_from_words(words: list[dict], pause: float) -> str:
+    """Join transcribed words into beats: one sentence per beat, and a long silence mid-sentence also
+    starts a new beat. (Speakers in short-form videos barely pause between sentences, so pauses alone
+    give beats that are far too long.)"""
+    beats, cur, last_end = [], "", None
+    for w in words:
+        t = (w.get("text") or "").strip()
+        if w.get("type", "word") != "word" or not t:
+            continue
+        if cur and last_end is not None:
+            gap = w["start"] - last_end
+            if re.search(r"[.!?…]$", cur) or gap >= pause:
+                beats.append(cur)
+                cur = ""
+        cur = f"{cur} {t}".strip()
+        last_end = w["end"]
+    if cur:
+        beats.append(cur)
+    return "\n\n".join(beats) + "\n"
+
+
 def cmd_analyze(a):
     P = job_paths(a.job)
     cfg = config(P["job"])
-    if not P["script"].exists():
-        die(f"missing {P['script']}")
     P["work"].mkdir(exist_ok=True)
     meta = probe(P["base"])
     vs = next(s for s in meta["streams"] if s["codec_type"] == "video")
     num, den = vs["r_frame_rate"].split("/")
     fps = float(num) / float(den)
     dur = float(meta["format"]["duration"])
+
+    audio = P["work"] / "base_vo.m4a"
+    if not audio.exists():
+        sh(["ffmpeg", "-y", "-v", "error", "-i", str(P["base"]), "-vn", "-ac", "1", "-c:a", "aac",
+            "-b:a", "128k", str(audio)])
+
+    # 0. no script.txt: write it from what is actually said in the voiceover
+    tr_path = P["work"] / "transcript.json"
+    if not P["script"].exists():
+        print("no script.txt - transcribing the voiceover (ElevenLabs speech-to-text)...")
+        tr = transcribe(audio, cfg)
+        tr_path.write_text(json.dumps(tr, ensure_ascii=False, indent=1))
+        P["script"].write_text(script_from_words(tr.get("words", []), cfg["fit"].get("beat_pause", 1.0)))
+        lc = ISO3_TO_2.get(tr.get("language_code", ""), tr.get("language_code", ""))
+        print(f"wrote {P['script']} ({len(split_beats(P['script'].read_text()))} beats, language: {lc}). "
+              f"Check it: fix spelling of names if needed, but keep the words as spoken.")
+    if not a.lang:
+        tr = json.loads(tr_path.read_text()) if tr_path.exists() else {}
+        a.lang = ISO3_TO_2.get(tr.get("language_code", ""), tr.get("language_code", ""))
+        if not a.lang:
+            die("couldn't tell the voiceover's language - pass it (e.g. --lang es)")
 
     beats = split_beats(P["script"].read_text())
     tokens = []  # {beat, text, cs, ce}
@@ -232,10 +292,6 @@ def cmd_analyze(a):
             tokens.append({"beat": bi, "text": m.group(), "cs": m.start()})
 
     # 1. align base voiceover to the script
-    audio = P["work"] / "base_vo.m4a"
-    if not audio.exists():
-        sh(["ffmpeg", "-y", "-v", "error", "-i", str(P["base"]), "-vn", "-ac", "1", "-c:a", "aac",
-            "-b:a", "128k", str(audio)])
     align_path = P["work"] / "base_alignment.json"
     text = "\n\n".join(beats)
     if align_path.exists() and json.loads(align_path.read_text()).get("_text") == text:
@@ -609,12 +665,12 @@ def build_plan(P, A, lang, cfg) -> dict:
             bi = owner[j]
             if err < 0:
                 flags.append({"cut": anchors[j - 1]["id"], "beat": S["beats"][bi]["id"], "error": err,
-                              "msg": f"cut {anchors[j - 1]['id']} lands {-err:.2f}s before its word: beat "
+                              "msg": f"cut {anchors[j - 1]['id']} (at {Cf[j] / fps:.1f}s) lands {-err:.2f}s before its word: beat "
                                      f"{S['beats'][bi]['id']} (or the beats before it) is ~{-err - tol + 0.05:.2f}s "
                                      f"too long - shorten the text or raise its speed"})
             else:
                 flags.append({"cut": anchors[j - 1]["id"], "beat": S["beats"][bi]["id"], "error": err,
-                              "msg": f"cut {anchors[j - 1]['id']} lands {err:.2f}s after its word: beat "
+                              "msg": f"cut {anchors[j - 1]['id']} (at {Cf[j] / fps:.1f}s) lands {err:.2f}s after its word: beat "
                                      f"{S['beats'][bi]['id']} is ~{err - tol + 0.05:.2f}s too short - "
                                      f"lengthen the text or lower its speed"})
     if hold > 0.3:
@@ -659,8 +715,7 @@ def write_report(P, plan) -> Path:
         err = f"{an['placed'] - an['target']:+.2f}" if an else ""
         L.append(f"| {s['seg'] + 1} | {s['src_start']:.2f} | {s['base_len']:.2f} | {s['frames'] / plan['fps']:.2f} | "
                  f"{s['speed']:.2f} | {s['trimmed']:.2f} | {err} |")
-    P["out"].mkdir(exist_ok=True)
-    p = P["out"] / f"{name}_{lang}_report.md"
+    p = P["work"] / lang / "report.md"
     p.write_text("\n".join(L) + "\n")
     return p
 
@@ -760,7 +815,7 @@ def main():
     check_tools()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("analyze"); p.add_argument("job"); p.add_argument("--lang", required=True)
+    p = sub.add_parser("analyze"); p.add_argument("job"); p.add_argument("--lang", help="language of the original voiceover; detected when the script is transcribed")
     p.set_defaults(fn=cmd_analyze)
     for name, fn in (("tts", cmd_tts), ("plan", cmd_plan), ("render", cmd_render), ("run", cmd_run)):
         p = sub.add_parser(name); p.add_argument("job"); p.add_argument("lang"); p.set_defaults(fn=fn)

@@ -14,13 +14,19 @@ Never ask the user for their ElevenLabs key and never run vt.py through Bash wit
 Call `setup_status`. If anything says MISSING or NOT SET, stop and tell the user exactly what to fix
 (see the `setup` skill), then continue once it is fixed. If no job was given, list the jobs and ask which one.
 
-A job folder holds the finished video (`base.mp4`, or any single .mp4/.mov) and `script.txt` with the exact
-voiceover text, one beat per paragraph (blank line between beats).
+A job folder holds the finished video (`base.mp4`, or any single .mp4/.mov). `script.txt` (the voiceover text,
+one beat per paragraph) is optional: without it, `analyze` transcribes the voiceover and writes it.
 
 ## 1. Analyze
-Work out the base language from `script.txt`, then call `analyze(job, base_lang)`.
-- Pass on any WARNING it prints (script doesn't match the voiceover, few words matched). Those must be fixed in
-  `script.txt` first; translating on top of a bad alignment wastes TTS credits.
+- **No `script.txt`:** call `analyze(job)`. It transcribes the voiceover, writes `script.txt`, and detects the
+  language. Then read `script.txt` and fix only obvious transcription mistakes in names (brands, products),
+  using any written script in the folder (e.g. `script_original.txt`) or what the user told you as the reference
+  for spelling. Never change the wording to match a written script: the text must say what the voiceover says.
+  If you changed anything, call `analyze(job)` again.
+- **`script.txt` exists:** work out its language and call `analyze(job, base_lang)`.
+- Pass on any WARNING it prints (script doesn't match the voiceover, few words matched). Fix those in
+  `script.txt` first; translating on top of a bad alignment wastes TTS credits. If the user wrote the script
+  themselves and it doesn't match, suggest deleting `script.txt` so it's transcribed from the audio instead.
 - The first time, it writes `cuts.txt` (auto-detected cuts). Tell the user they can edit it (delete false cuts,
   add missed ones or sync points inside a clip) and re-run analyze; carry on unless they want to review.
 
@@ -28,7 +34,8 @@ Then read `<job>/work/translate_brief.md` (and `work/analysis.json` if you need 
 
 ## 2. Translate (you do this step)
 Target languages: the ones the user named, otherwise `target languages` from `setup_status`, skipping the base
-language. For each language write `<job>/work/<lang>/script.json`:
+language. Use 2-letter codes (`nl` Dutch, `pt` Portuguese, `pl` Polish…); any language the ElevenLabs model
+speaks works. For each language write `<job>/work/<lang>/script.json`:
 
 ```json
 {
@@ -60,9 +67,9 @@ Rules:
 3. Repeat. TTS is cached per beat, so only edited beats cost credits. After 3 rounds, stop and report what's left.
 
 ## 4. Render
-`render(job, lang)` for each language (a few minutes each for 4K). Output: `<job>/out/<job>_<lang>.mp4` and
-`<job>/out/<job>_<lang>_report.md`.
+`render(job, lang)` for each language (a few minutes each for 4K). Output: `<job>/out/<job>_<lang>.mp4`.
+The fitting details stay in `<job>/work/<lang>/report.md`.
 
 ## 5. Report
-Per language: the output path, its length vs the original, and anything the report still flags. Suggest the user
-watches the flagged cuts.
+Per language: the output path, its length vs the original, and anything still flagged (with the time in the
+video, so the user can jump to it). If nothing is flagged, say so in one line. Don't paste the report's tables.
