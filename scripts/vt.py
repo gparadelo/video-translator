@@ -1,22 +1,23 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["requests"]
+# dependencies = ["requests", "anthropic"]
 # ///
 """
 vt.py - translate a short-form product video into other languages.
 
-  uv run vt.py analyze jobs/<name> --lang es    # base voiceover + cuts -> anchors, translation brief
-  (translation: Claude Code writes jobs/<name>/work/<lang>/script.json - see the translate skill)
-  uv run vt.py tts     jobs/<name> fr           # ElevenLabs voiceover with timestamps (cached)
-  uv run vt.py plan    jobs/<name> fr           # fit video to voiceover, write report (no render)
-  uv run vt.py render  jobs/<name> fr           # render jobs/<name>/out/<name>_fr.mp4
-  uv run vt.py run     jobs/<name> fr           # tts + plan + render
+  uv run vt.py run       jobs/<name> [de fr]      # everything below, translation by the Claude API
+  uv run vt.py analyze   jobs/<name> --lang es    # base voiceover + cuts -> anchors, translation brief
+  uv run vt.py translate jobs/<name> fr           # Claude API writes work/fr/script.json
+  uv run vt.py tts       jobs/<name> fr           # ElevenLabs voiceover with timestamps (cached)
+  uv run vt.py plan      jobs/<name> fr           # fit video to voiceover, write report (no render)
+  uv run vt.py render    jobs/<name> fr           # render jobs/<name>/out/<name>_fr.mp4
 
+In the Claude Code plugin, Claude Code itself does the translate step (no API key needed).
 <job> is a folder path, or just a name when VT_JOBS_DIR points at the folder that holds the jobs.
-Settings: ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID come from the environment (the plugin sets them),
-or from a .env file in the jobs folder or the current folder. config.default.toml holds the defaults;
-a config.toml in the jobs folder overrides any of them.
+Settings: ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID (and ANTHROPIC_API_KEY for translate/run) come from
+the environment (the plugin sets the ElevenLabs ones), or from a .env file in the jobs folder or the
+current folder. config.default.toml holds the defaults; a config.toml in the jobs folder overrides any of them.
 """
 from __future__ import annotations
 
@@ -419,6 +420,167 @@ def cmd_analyze(a):
           f"of {dur:.2f}s. Brief: {P['work'] / 'translate_brief.md'}")
 
 
+# ----------------------------------------------------------------------------- translate (Claude API)
+
+TRANSLATE_SYSTEM = """You translate the voiceover of short-form product videos (Instagram/TikTok style) so it can be \
+re-voiced in another language and the video re-timed to it.
+
+The voiceover is split into beats. Some words carry markers like {3}: each marker is a video cut that has to land \
+on that word.
+
+Rules:
+- Return exactly the same beats, with the same ids and in the same order.
+- Keep every {n} marker exactly once, directly in front of the word that carries the same meaning as in the \
+original. Never put a marker in a different beat than the original. Keep markers in increasing order when the \
+grammar allows it. Markers that are adjacent in the original (like {14}{15}) stay adjacent.
+- Fit the timing: each beat should take about as long to say as the original. You get the seconds and character \
+count of each original beat and the original speaking rate. Prefer natural, spoken, short-form-video phrasing \
+over a literal translation; shorten when the target language runs long (German and French usually do).
+- Match the register of the original (informal stays informal, formal stays formal). Never translate brand or \
+product names.
+- speed is the voice speed for a beat (0.7 to 1.2, null = default). Use it only when a beat can't be shortened \
+or lengthened without losing meaning; rewriting the text comes first."""
+
+LANG_NAMES = {"en": "English", "es": "Spanish", "de": "German", "fr": "French", "it": "Italian", "nl": "Dutch",
+              "pt": "Portuguese", "pl": "Polish", "sv": "Swedish", "da": "Danish", "no": "Norwegian",
+              "fi": "Finnish", "tr": "Turkish", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+              "ar": "Arabic", "hi": "Hindi", "ru": "Russian", "uk": "Ukrainian", "cs": "Czech", "ro": "Romanian",
+              "el": "Greek", "hu": "Hungarian", "ca": "Catalan", "gl": "Galician"}
+
+SCRIPT_SCHEMA = {
+    "type": "object",
+    "properties": {"beats": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "integer"}, "text": {"type": "string"},
+                       "speed": {"anyOf": [{"type": "number"}, {"type": "null"}]}},
+        "required": ["id", "text", "speed"], "additionalProperties": False}}},
+    "required": ["beats"], "additionalProperties": False,
+}
+
+
+def lang_name(code: str) -> str:
+    return f"{LANG_NAMES.get(code, code)} ({code})"
+
+
+def brief_table(A) -> str:
+    rate = sum(len(b["text"]) for b in A["beats"]) / sum(b["dur"] for b in A["beats"])
+    rows = [f"Original speaking rate: {rate:.1f} characters/second.", "",
+            "| beat | seconds | chars | text with markers |", "|---|---|---|---|"]
+    rows += [f"| {b['id']} | {b['dur']:.2f} | {len(b['text'])} | {b['marked']} |" for b in A["beats"]]
+    return "\n".join(rows)
+
+
+def check_script(A, beats: list[dict]) -> list[str]:
+    """Problems that make a translation unusable: wrong beats, or markers lost, duplicated or moved."""
+    errs = []
+    if [b["id"] for b in beats] != [b["id"] for b in A["beats"]]:
+        return [f"the beats must have ids {[b['id'] for b in A['beats']]}, in that order"]
+    for base, b in zip(A["beats"], beats):
+        want = [int(m) for m in MARK.findall(base["marked"])]
+        got = [int(m) for m in MARK.findall(b["text"])]
+        lost = [m for m in want if m not in got]
+        extra = sorted({m for m in got if got.count(m) > 1 or m not in want})
+        if lost:
+            errs.append(f"beat {b['id']} is missing marker(s) {', '.join('{%d}' % m for m in lost)}")
+        if extra:
+            errs.append(f"beat {b['id']} has marker(s) {', '.join('{%d}' % m for m in extra)} that don't belong "
+                        f"there or appear more than once")
+        if not strip_markers(b["text"])[0].strip():
+            errs.append(f"beat {b['id']} is empty")
+    return errs
+
+
+def claude_script(cfg, messages: list[dict]) -> tuple[list[dict], dict]:
+    """One Claude call that returns the beats as JSON. Returns (beats, assistant message to append)."""
+    import anthropic  # only needed for this step; the plugin's MCP server never calls it
+
+    C = cfg.get("claude", {})
+    model = C.get("model", "claude-opus-5-5")
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        die("ANTHROPIC_API_KEY is not set - put it in the .env file in your jobs folder (see .env.example). "
+            "Create one at platform.claude.com -> API keys.")
+    client = anthropic.Anthropic()
+    try:
+        r = client.beta.messages.create(
+            model=model, max_tokens=16000, system=TRANSLATE_SYSTEM, messages=messages,
+            output_config={"effort": C.get("effort", "medium"),
+                           "format": {"type": "json_schema", "schema": SCRIPT_SCHEMA}},
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        )
+    except anthropic.AuthenticationError:
+        die("the Claude API rejected ANTHROPIC_API_KEY (401) - check the key in your .env file")
+    except anthropic.APIStatusError as e:
+        die(f"Claude API error ({e.status_code}): {e.message}")
+    except anthropic.APIConnectionError:
+        die("couldn't reach the Claude API - check the internet connection")
+    if r.stop_reason == "refusal":
+        die(f"Claude declined to translate this script ({getattr(r.stop_details, 'category', None)})")
+    if r.stop_reason == "max_tokens":
+        die("Claude's answer was cut off (max_tokens) - the script may be too long for one call")
+    text = next(b.text for b in r.content if b.type == "text")
+    u = r.usage
+    print(f"  (Claude {r.model}: {u.input_tokens} in / {u.output_tokens} out tokens)")
+    return json.loads(text)["beats"], {"role": "assistant", "content": text}
+
+
+def write_lang_script(P, lang, beats: list[dict]) -> Path:
+    out = []
+    for b in beats:
+        d = {"id": b["id"], "text": b["text"].strip()}
+        if b.get("speed") is not None:
+            d["speed"] = round(max(0.7, min(1.2, float(b["speed"]))), 2)
+        out.append(d)
+    p = P["work"] / lang / "script.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"lang": lang, "beats": out}, ensure_ascii=False, indent=1))
+    return p
+
+
+def ask_until_valid(P, A, lang, cfg, messages) -> Path:
+    """Ask Claude, and if markers got lost, tell it what's wrong and ask again (twice at most)."""
+    for attempt in range(3):
+        beats, reply = claude_script(cfg, messages)
+        errs = check_script(A, beats)
+        if not errs:
+            return write_lang_script(P, lang, beats)
+        print(f"  translation problems, asking again: {'; '.join(errs)}")
+        messages += [reply, {"role": "user", "content": "Fix these problems and return all beats again:\n- "
+                                                         + "\n- ".join(errs)}]
+    die(f"Claude's {lang} translation still has problems after 3 tries: {'; '.join(errs)}")
+
+
+def translate_lang(P, A, lang, cfg) -> Path:
+    """First translation of the whole script into `lang` -> work/<lang>/script.json."""
+    print(f"{lang}: translating with Claude...")
+    prompt = (f"Translate this {lang_name(A['base_lang'])} voiceover into {lang_name(lang)}.\n\n{brief_table(A)}")
+    return ask_until_valid(P, A, lang, cfg, [{"role": "user", "content": prompt}])
+
+
+def refit_lang(P, A, lang, cfg, plan) -> Path:
+    """Rewrite the beats the fitting step flagged as too long/short (or with a missing marker)."""
+    S = json.loads((P["work"] / lang / "script.json").read_text())
+    flagged = sorted({f["beat"] for f in plan["flags"] if f["beat"] is not None})
+    rows = ["| beat | original s | voiced s | speed | text |", "|---|---|---|---|---|"]
+    for sb, pb in zip(S["beats"], plan["beats"]):
+        rows.append(f"| {sb['id']} | {pb['base_dur']:.2f} | {pb['dur']:.2f} | {sb.get('speed') or 'default'} | "
+                    f"{sb['text']} |")
+    prompt = (f"Here is the original {lang_name(A['base_lang'])} voiceover:\n\n{brief_table(A)}\n\n"
+              f"and its {lang_name(lang)} translation after voicing it (seconds as spoken):\n\n" + "\n".join(rows) +
+              "\n\nFitting the video to this voice left these problems:\n- " +
+              "\n- ".join(f["msg"] for f in plan["flags"]) +
+              f"\n\nRewrite beat(s) {', '.join(map(str, flagged)) or 'as needed'} to fix them: shorter or longer "
+              "text first, speed only for the last bit. Return all beats; leave the others exactly as they are.")
+    print(f"{lang}: asking Claude to rewrite beat(s) {', '.join(map(str, flagged))}...")
+    return ask_until_valid(P, A, lang, cfg, [{"role": "user", "content": prompt}])
+
+
+def cmd_translate(a):
+    P = job_paths(a.job)
+    cfg = config(P["job"])
+    A = load_analysis(P)
+    print(f"wrote {translate_lang(P, A, a.lang, cfg)}")
+
+
 # ----------------------------------------------------------------------------- tts
 
 def load_lang_script(P, A, lang) -> dict:
@@ -819,9 +981,37 @@ def cmd_render(a):
 
 
 def cmd_run(a):
-    print("voiceover..."); cmd_tts(a)
-    print("fitting..."); cmd_plan(a)
-    print("rendering..."); cmd_render(a)
+    """The whole job, no Claude Code needed: analyze (if not done yet), then per language translate
+    (if there's no script.json yet), voice, fit, let Claude rewrite flagged beats, and render."""
+    P = job_paths(a.job)
+    cfg = config(P["job"])
+    if a.base_lang or not P["analysis"].exists():
+        cmd_analyze(argparse.Namespace(job=a.job, lang=a.base_lang))
+    A = load_analysis(P)
+    langs = [l for l in (a.langs or cfg.get("languages", [])) if l != A["base_lang"]]
+    if not langs:
+        die("no target languages - name them (e.g. `run <job> de fr`) or set `languages` in config.toml")
+    rounds = int(cfg.get("claude", {}).get("fix_rounds", 3))
+    summary = []
+    for lang in langs:
+        if a.retranslate or not (P["work"] / lang / "script.json").exists():
+            translate_lang(P, A, lang, cfg)
+        else:
+            print(f"{lang}: using the existing work/{lang}/script.json")
+        for rnd in range(rounds + 1):
+            print(f"{lang}: voiceover..."); cmd_tts(argparse.Namespace(job=a.job, lang=lang), quiet=True)
+            plan = cmd_plan(argparse.Namespace(job=a.job, lang=lang))
+            if not plan["flags"] or rnd == rounds:
+                break
+            refit_lang(P, A, lang, cfg, plan)
+        if not a.no_render:
+            print(f"{lang}: rendering..."); cmd_render(argparse.Namespace(job=a.job, lang=lang))
+        summary.append((lang, plan))
+    print("\nsummary:")
+    for lang, plan in summary:
+        out = P["out"] / f"{P['job'].name}_{lang}.mp4"
+        state = f"{len(plan['flags'])} thing(s) still flagged, see work/{lang}/report.md" if plan["flags"] else "all cuts in sync"
+        print(f"  {lang}: {plan['total_frames'] / plan['fps']:.1f}s, {state}" + ("" if a.no_render else f" -> {out}"))
 
 
 def main():
@@ -831,8 +1021,14 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("analyze"); p.add_argument("job"); p.add_argument("--lang", help="language of the original voiceover; detected when the script is transcribed")
     p.set_defaults(fn=cmd_analyze)
-    for name, fn in (("tts", cmd_tts), ("plan", cmd_plan), ("render", cmd_render), ("run", cmd_run)):
+    for name, fn in (("translate", cmd_translate), ("tts", cmd_tts), ("plan", cmd_plan), ("render", cmd_render)):
         p = sub.add_parser(name); p.add_argument("job"); p.add_argument("lang"); p.set_defaults(fn=fn)
+    p = sub.add_parser("run", help="the whole job: analyze, translate with Claude, voice, fit, render")
+    p.add_argument("job"); p.add_argument("langs", nargs="*", help="target languages (default: `languages` in config)")
+    p.add_argument("--base-lang", help="language of the original voiceover; re-runs analyze")
+    p.add_argument("--retranslate", action="store_true", help="translate again even if script.json exists")
+    p.add_argument("--no-render", action="store_true", help="stop after fitting (check the reports first)")
+    p.set_defaults(fn=cmd_run)
     a = ap.parse_args()
     a.fn(a)
 

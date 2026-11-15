@@ -29,6 +29,12 @@ pause_max_extra = 0.40 # pauses between beats may grow by this much
 scene_threshold = 0.20 # cut detection sensitivity (lower = more cuts)
 beat_pause = 1.0       # transcribed script: one beat per sentence; this much silence mid-sentence also splits
 
+[claude]
+# Only used by `vt.py run` / `vt.py translate` (the Claude API). In the plugin, Claude Code translates.
+model = "claude-opus-5-5"
+effort = "medium"      # low | medium | high | xhigh | max
+fix_rounds = 3         # times Claude may rewrite beats that don't fit before rendering anyway
+
 [render]
 video_codec = "hevc_videotoolbox"
 video_bitrate = "20M"

@@ -51,4 +51,12 @@ If a cut is detected wrong, or you want a sync point inside a clip (e.g. the mom
 - Rendering uses `hevc_videotoolbox` (macOS). On other systems set `video_codec = "libx265"` under `[render]`.
 
 ## Without Claude Code
-`scripts/vt.py` also runs on its own (`uv run scripts/vt.py --help`), reading the key from a `.env` file (see [.env.example](.env.example)). You then write `work/<lang>/script.json` yourself.
+`scripts/vt.py` also runs on its own, with the Claude API doing the translation instead of Claude Code. It reads the keys from a `.env` file in your jobs folder (see [.env.example](.env.example)): `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` and `ANTHROPIC_API_KEY`.
+
+```
+uv run scripts/vt.py run <job>            # all default languages
+uv run scripts/vt.py run <job> de fr      # just these
+```
+This analyzes the video (transcribing it if there's no `script.txt`), translates each language, voices it, lets Claude rewrite beats that don't fit (up to 3 rounds), and renders. An existing `work/<lang>/script.json` is reused; `--retranslate` makes a fresh one, `--no-render` stops before rendering so you can check the reports. Model and effort are under `[claude]` in [config.default.toml](config.default.toml). `uv run scripts/vt.py --help` lists the single steps.
+
+Unlike the plugin, this doesn't fix the spelling of names in a transcribed `script.txt`: check it after the first `analyze` if names matter.
