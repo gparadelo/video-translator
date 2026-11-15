@@ -59,7 +59,7 @@ def die(msg: str):
 
 # Progress goes through one reporter, so the CLI can print it and a worker can forward it to the web app.
 # Every event has "msg" (text for a person, may be None) and optionally: "stage" (transcribe, align, cuts,
-# analyze, translate, rewrite, tts, plan, render, done), "lang", "done"/"total" (counts within the stage),
+# analyze, translate, rewrite, tts, plan, render, preview, done), "lang", "done"/"total" (counts within the stage),
 # "level" ("info" / "warning") and "usage" (API usage to bill: {"service", ...amounts}).
 _reporter = None
 
@@ -1071,6 +1071,14 @@ def cmd_render(a):
     log(f"done: {out} ({media_duration(out):.2f}s)")
 
 
+def make_preview(video: Path, out: Path) -> Path:
+    """A small H.264 copy (long side 1280) that every browser plays; the 4K HEVC output is for downloading."""
+    scale = "scale='if(gt(iw,ih),1280,-2)':'if(gt(iw,ih),-2,1280)'"
+    sh(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-vf", scale, "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)])
+    return out
+
+
 # ----------------------------------------------------------------------------- whole jobs (CLI and worker)
 #
 # A job runs in two halves so a person can check the transcript in between:
@@ -1107,15 +1115,21 @@ def prepare(job, base_lang: str | None = None) -> dict:
             "names_fixed": fixed}
 
 
-def produce(job, langs: list[str] | None = None, retranslate: bool = False, render: bool = True) -> list[dict]:
-    """Second half of a job. Returns one {"lang", "seconds", "flags", "report", "output"} per language."""
+def produce(job, langs: list[str] | None = None, retranslate: bool = False, render: bool = True,
+            preview: bool = False) -> list[dict]:
+    """Second half of a job. Returns one {"lang", "seconds", "flags", "report", "output", "preview"} per
+    language. `preview` also makes a small H.264 copy of each output for playing in a browser."""
     check_tools()
     P = job_paths(job)
     cfg = config(P["job"])
     A = load_analysis(P)
     if analysis_stale(P, A):
         log("script.txt or cuts.txt changed - analyzing again", stage="analyze")
+        had_warnings = bool(A.get("warnings"))
         A = cmd_analyze(argparse.Namespace(job=str(P["job"]), lang=A["base_lang"]))
+        if A["warnings"] and not had_warnings:  # stop before paying for voices on a bad alignment
+            die("after your edits, script.txt no longer matches the voiceover: " + " ".join(A["warnings"]) +
+                " Only fix spelling; the words have to stay as spoken.")
         retranslate = True  # translations of the old text don't fit the new one
     langs = [l for l in (langs or cfg.get("languages", [])) if l != A["base_lang"]]
     if not langs:
@@ -1139,9 +1153,13 @@ def produce(job, langs: list[str] | None = None, retranslate: bool = False, rend
             log(f"{lang}: rendering...", stage="render", lang=lang)
             cmd_render(argparse.Namespace(job=str(P["job"]), lang=lang))
             out = P["out"] / f"{P['job'].name}_{lang}.mp4"
+        prev = None
+        if out and preview:
+            log(f"{lang}: making the preview...", stage="preview", lang=lang)
+            prev = make_preview(out, P["work"] / lang / "preview.mp4")
         res = {"lang": lang, "seconds": round(plan["total_frames"] / plan["fps"], 2),
                "flags": [f["msg"] for f in plan["flags"]], "report": str(P["work"] / lang / "report.md"),
-               "output": str(out) if out else None}
+               "output": str(out) if out else None, "preview": str(prev) if prev else None}
         log(f"{lang}: finished", stage="done", lang=lang, result=res)
         results.append(res)
     return results
