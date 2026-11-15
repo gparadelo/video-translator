@@ -5,8 +5,8 @@ and a Cloudflare R2 bucket (the videos). A worker on a Mac does the actual trans
 
 ## 1. Supabase
 1. Create a project at supabase.com (the free plan is enough).
-2. **Database:** open SQL Editor, paste all of
-   [supabase/migrations/20261115000000_init.sql](../supabase/migrations/20261115000000_init.sql), and run it.
+2. **Database:** open SQL Editor and run each file in [supabase/migrations/](../supabase/migrations), oldest
+   first: paste all of it, run, then the next one.
 3. **Login links:** Authentication -> URL Configuration. Set Site URL to the app's address, and add
    `http://localhost:3000/auth/confirm` and `https://YOUR-APP/auth/confirm` to Redirect URLs.
 4. **People:** Authentication -> Users -> Add user, once per person (their email). The login page only

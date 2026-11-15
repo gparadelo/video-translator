@@ -1,45 +1,60 @@
-import { Suspense } from "react";
-import { workerOnline } from "@/lib/api";
-import { getUser } from "@/lib/supabase/server";
+"use client";
 
-// Placeholder until the real screens exist: proves sign-in and the database connection work.
+import Link from "next/link";
+import { useState } from "react";
+import { Page } from "@/components/Header";
+import { Card, StatusPill } from "@/components/ui";
+import { langName, type Job } from "@/lib/jobs";
+import { createClient } from "@/lib/supabase/client";
+import { usePoll } from "@/lib/use-poll";
+
+// Home: your videos, newest first, with where each one stands.
 export default function Home() {
-  return (
-    <main className="mx-auto flex max-w-xl flex-col gap-4 p-6">
-      <h1 className="text-2xl font-semibold">Video Translator</h1>
-      <Suspense fallback={<p className="text-sm">Loading…</p>}>
-        <Jobs />
-      </Suspense>
-      <form action="/auth/signout" method="post">
-        <button type="submit" className="underline">
-          Sign out
-        </button>
-      </form>
-    </main>
-  );
-}
-
-async function Jobs() {
-  const { supabase, user } = await getUser();
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, name, status, created_at")
-    .order("created_at", { ascending: false });
-  const { data: workers } = await supabase.from("workers").select("id, last_seen");
+  const [supabase] = useState(createClient);
+  const [jobs] = usePoll(async () => {
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("id, name, status, languages, created_at")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data as Pick<Job, "id" | "name" | "status" | "languages" | "created_at">[];
+  }, 8000);
 
   return (
-    <>
-      <p className="text-sm">
-        Signed in as {user?.email}. Worker: {workerOnline(workers) ? "online" : "offline"}.
-      </p>
-      <ul className="flex flex-col gap-1">
-        {(jobs ?? []).map((j) => (
+    <Page>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Your videos</h1>
+        <Link
+          href="/new"
+          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+        >
+          New video
+        </Link>
+      </div>
+
+      {jobs === null && <p className="text-sm text-neutral-500">Loading…</p>}
+      {jobs?.length === 0 && (
+        <Card className="text-sm text-neutral-500">Nothing here yet. Upload a video to translate it.</Card>
+      )}
+      <ul className="flex flex-col gap-2">
+        {jobs?.map((j) => (
           <li key={j.id}>
-            {j.name}: {j.status}
+            <Link
+              href={`/jobs/${j.id}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-4 py-3 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
+            >
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{j.name}</span>
+                <span className="block truncate text-xs text-neutral-500">
+                  {new Date(j.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                  {j.languages.length > 0 && ` · ${j.languages.map(langName).join(", ")}`}
+                </span>
+              </span>
+              <StatusPill status={j.status} />
+            </Link>
           </li>
         ))}
-        {!jobs?.length && <li>No videos yet.</li>}
       </ul>
-    </>
+    </Page>
   );
 }

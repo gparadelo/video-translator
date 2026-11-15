@@ -1,5 +1,5 @@
 .env
-jobs/
+/jobs/
 config.toml
 .DS_Store
 __pycache__/

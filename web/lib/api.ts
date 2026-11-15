@@ -14,8 +14,3 @@ export function extension(filename: string) {
   const m = /\.[a-z0-9]+$/i.exec(filename);
   return m ? m[0].toLowerCase() : "";
 }
-
-/** A worker counts as online when it checked in during the last 90 seconds (it does so every 30). */
-export function workerOnline(workers: { last_seen: string }[] | null) {
-  return (workers ?? []).some((w) => Date.now() - new Date(w.last_seen).getTime() < 90_000);
-}
