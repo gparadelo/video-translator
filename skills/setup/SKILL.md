@@ -19,5 +19,6 @@ description: Check and fix the Video Translator setup (ffmpeg, uv, ElevenLabs ke
    - A different voice for one language: add `ELEVENLABS_VOICE_ID_DE=...` (etc.) to a `.env` file in the jobs folder.
    - Different target languages, ElevenLabs model or fitting limits: copy `config.default.toml` from
      `${CLAUDE_PLUGIN_ROOT}` to `config.toml` in the jobs folder and edit only the keys to change.
-4. Finish by telling the user how to start: put a video and its `script.txt` in `<jobs folder>/<name>/`, then run
-   `/video-translator:translate <name>`.
+4. Finish by telling the user how to start: put the finished video in `<jobs folder>/<name>/`, then run
+   `/video-translator:translate <name>`. No `script.txt` is needed: the voiceover is transcribed. A written script
+   saved as `script_original.txt` is only used to spell names correctly.
