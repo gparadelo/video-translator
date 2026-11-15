@@ -2,7 +2,7 @@
 # and keep only the keys you want to change.
 
 # Languages every video gets translated into (the base language is skipped automatically).
-languages = ["en", "es", "de", "fr", "it"]
+languages = ["en", "es", "de", "fr", "it", "nl"]
 
 [elevenlabs]
 # Use the same model and settings you use in the ElevenLabs app.

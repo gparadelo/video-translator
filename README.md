@@ -21,7 +21,7 @@ Run `/video-translator:setup` to check everything is in place.
 
 ## Per video
 1. Make a folder `<jobs folder>/<name>/` and put the exported video in it (`base.mp4`, or any single .mp4/.mov).
-2. In Claude Code: `/video-translator:translate <name>`, optionally followed by language codes, e.g. `de fr nl`.
+2. In Claude Code: `/video-translator:translate <name>`, optionally followed by language codes, e.g. `de fr`.
 3. Results go to `<name>/out/`: one `.mp4` per language.
 
 The voiceover is transcribed into `<name>/script.txt` (one beat per paragraph), and its language is detected. You can also write `script.txt` yourself, but it must say exactly what the voiceover says. If it doesn't match, delete it and let it be transcribed. If a written script is in the folder (e.g. `script_original.txt`), Claude uses it only to fix the spelling of names.
@@ -36,8 +36,8 @@ The voiceover is transcribed into `<name>/script.txt` (one beat per paragraph), 
 If a cut is detected wrong, or you want a sync point inside a clip (e.g. the moment a light changes colour), edit `<name>/cuts.txt` and run the translation again.
 
 ## Settings
-- **One extra language for one video:** name it in the command, e.g. `/video-translator:translate <name> nl` for Dutch. Use the 2-letter code. Any language the ElevenLabs model speaks works.
-- **Change the default languages:** create `config.toml` in your jobs folder with one line, e.g. `languages = ["en", "es", "de", "fr", "it", "nl"]`.
+- **One extra language for one video:** name it in the command, e.g. `/video-translator:translate <name> pt` for Portuguese. Use the 2-letter code. Any language the ElevenLabs model speaks works.
+- **Change the default languages:** create `config.toml` in your jobs folder with one line, e.g. `languages = ["en", "es", "fr", "pt"]`.
 - **ElevenLabs model, fitting limits, encoder:** copy [config.default.toml](config.default.toml) to `config.toml` in your jobs folder and keep only the keys you change.
 - **A different voice for one language:** add `ELEVENLABS_VOICE_ID_DE=...` (etc.) to a `.env` file in your jobs folder.
 - Rendering uses `hevc_videotoolbox` (macOS). On other systems set `video_codec = "libx265"` under `[render]`.
