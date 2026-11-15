@@ -84,6 +84,9 @@ code { font-family: var(--font-mono); font-size: 0.88em; background: var(--code-
 
 .note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 12px 14px; font-size: 0.93rem; }
 
+.perms { display: grid; gap: 4px; margin: 8px 0; padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; font-size: 0.93rem; }
+.perms b { font-weight: 600; margin-right: 6px; }
+
 .tree { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0; font: 0.86rem/1.65 var(--font-mono); }
 .tree .c { color: var(--muted); }
 
@@ -135,7 +138,9 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
         <div class="cmd"><pre>claude</pre><button type="button" data-copy>Copy</button></div>
         <p>Type <code>/plugin</code>, go to <b>Installed → video-translator → Configure</b>, and fill in:</p>
         <ul class="needs">
-          <li><span><b>ElevenLabs API key</b>: create one in your ElevenLabs account under API keys. It's stored in your Mac's Keychain, never in a file.</span></li>
+          <li><span><b>ElevenLabs API key</b>: create one in your ElevenLabs account under Developers → API keys. Turn on these three permissions and leave the rest at No access:
+            <span class="perms"><span><b>Text to Speech</b> voices the translations</span><span><b>Speech to Text</b> transcribes the original voiceover</span><span><b>Forced Alignment</b> times each word</span></span>
+            The key is stored in your Mac's Keychain, never in a file.</span></li>
           <li><span><b>ElevenLabs voice ID</b>: open your voice in ElevenLabs and copy its ID.</span></li>
           <li><span><b>Jobs folder</b>: where your videos go. The default, <code>~/Documents/Video Translations</code>, is fine for most people; it's created the first time you use the plugin. To use another folder, type its full path, such as <code>~/Movies/Translations</code>. Tip: drag the folder from Finder into the Terminal window to paste its path.</span></li>
         </ul>
@@ -174,6 +179,7 @@ footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--li
         <div class="cmd" style="margin-top:6px"><pre>claude plugin marketplace update video-translator</pre><button type="button" data-copy>Copy</button></div>
         <div class="cmd"><pre>claude plugin update video-translator@video-translator</pre><button type="button" data-copy>Copy</button></div>
       </div>
+      <div><b>"Missing permission" or "API key rejected"</b><span>Open the key in ElevenLabs (Developers → API keys) and check that Text to Speech, Speech to Text and Forced Alignment are on. Changing an existing key's permissions is enough. If you create a new key instead, enter it again in <code>/plugin</code> → video-translator → Configure.</span></div>
       <div><b>"The tools aren't available"</b><span>Claude Code couldn't start the plugin, usually because <code>uv</code> isn't installed. Run step 1 again, then restart Claude Code.</span></div>
       <div><b>"Repository not found" when adding the plugin</b><span>Check the name is typed exactly as <code>gparadelo/video-translator</code>.</span></div>
     </div>

@@ -14,6 +14,10 @@ description: Check and fix the Video Translator setup (ffmpeg, uv, ElevenLabs ke
    - **API key / voice ID NOT SET, or jobs folder NOT SET** → the user sets these in Claude Code: `/plugin` →
      Installed → video-translator → Configure (or `/config`). The key is stored in the system keychain.
      Never ask them to paste the key into the chat.
+   - **A tool says the key is missing a permission, or was rejected (401)** → in ElevenLabs (Developers → API
+     keys) the key needs **Text to Speech**, **Speech to Text** and **Forced Alignment**; everything else can be
+     No access. Editing an existing key's permissions is enough, no need to re-enter it in Claude Code. A new key
+     must be entered in `/plugin` → video-translator → Configure, then restart Claude Code.
    - **jobs folder does not exist** → offer to create it.
 3. Optional, explain only if relevant:
    - A different voice for one language: add `ELEVENLABS_VOICE_ID_DE=...` (etc.) to a `.env` file in the jobs folder.

@@ -1,7 +1,7 @@
 {
   "name": "video-translator",
   "displayName": "Video Translator",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Translate a short-form voiceover video into other languages with your ElevenLabs voice, re-timing the clips so every cut still lands on its word.",
   "author": { "name": "Gonzalo Paradelo" },
   "keywords": ["video", "translation", "elevenlabs", "voiceover", "ffmpeg"],
@@ -20,7 +20,7 @@
     "elevenlabs_api_key": {
       "type": "string",
       "title": "ElevenLabs API key",
-      "description": "From elevenlabs.io → Developers → API keys. Stored in your system keychain.",
+      "description": "From elevenlabs.io → Developers → API keys. Give it these permissions: Text to Speech, Speech to Text and Forced Alignment (everything else can be No access). Stored in your system keychain.",
       "sensitive": true,
       "required": true
     },

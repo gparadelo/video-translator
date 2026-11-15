@@ -127,6 +127,20 @@ def resolve_job(job: str) -> Path:
     die(f"job folder '{job}' not found" + (f" in {jd}. Jobs there: {', '.join(known) or 'none'}" if jd else ""))
 
 
+# ElevenLabs API key permissions this tool needs (everything else can be "No access").
+KEY_PERMISSIONS = ("Text to Speech", "Speech to Text", "Forced Alignment")
+
+
+def api_error(what: str, r, permission: str):
+    if r.status_code in (401, 403) and ("permission" in r.text.lower() or "scope" in r.text.lower()):
+        die(f"{what} failed: your ElevenLabs API key is missing the '{permission}' permission. "
+            f"Edit the key at elevenlabs.io (Developers -> API keys) and enable: {', '.join(KEY_PERMISSIONS)}.")
+    if r.status_code == 401:
+        die(f"{what} failed: ElevenLabs rejected the API key (401). Check it in /plugin -> video-translator -> "
+            f"Configure. It needs these permissions: {', '.join(KEY_PERMISSIONS)}.\n{r.text[:300]}")
+    die(f"{what} failed ({r.status_code}): {r.text[:500]}")
+
+
 def sh(cmd: list[str], binary=False) -> subprocess.CompletedProcess:
     r = subprocess.run(cmd, capture_output=True, text=not binary)
     if r.returncode != 0:
@@ -209,7 +223,7 @@ def forced_align(audio: Path, text: str) -> dict:
         r = requests.post(f"{API}/v1/forced-alignment", headers={"xi-api-key": env("ELEVENLABS_API_KEY")},
                           files={"file": (audio.name, f, "audio/mp4")}, data={"text": text}, timeout=600)
     if r.status_code != 200:
-        die(f"forced alignment failed ({r.status_code}): {r.text[:500]}")
+        api_error("forced alignment", r, "Forced Alignment")
     return r.json()
 
 
@@ -229,7 +243,7 @@ def transcribe(audio: Path, cfg: dict) -> dict:
                                 "tag_audio_events": "false", "timestamps_granularity": "word"},
                           timeout=600)
     if r.status_code != 200:
-        die(f"transcription failed ({r.status_code}): {r.text[:500]}")
+        api_error("transcription", r, "Speech to Text")
     return r.json()
 
 
@@ -437,7 +451,7 @@ def tts_beat(text, prev, nxt, lang, speed, cfg, outdir: Path) -> dict:
                       params={"output_format": el["output_format"]},
                       headers={"xi-api-key": env("ELEVENLABS_API_KEY")}, json=body, timeout=300)
     if r.status_code != 200:
-        die(f"TTS failed ({r.status_code}): {r.text[:500]}")
+        api_error("TTS", r, "Text to Speech")
     d = r.json()
     mp3.write_bytes(base64.b64decode(d["audio_base64"]))
     meta = {"text": text, "speed": settings["speed"], "alignment": d.get("alignment"),

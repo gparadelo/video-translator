@@ -4,7 +4,15 @@ A Claude Code plugin that turns one finished short-form video (voiceover only) i
 
 ## What you need
 - [Claude Code](https://claude.com/claude-code) with a Claude subscription
-- An [ElevenLabs](https://elevenlabs.io) account: an API key and the ID of the voice to use
+- An [ElevenLabs](https://elevenlabs.io) account: the ID of the voice to use, and an API key with these permissions:
+
+  | Permission | Used for |
+  |---|---|
+  | Text to Speech | voicing the translations |
+  | Speech to Text | transcribing the original voiceover when there's no `script.txt` |
+  | Forced Alignment | timing each word of the original voiceover |
+
+  Everything else can be left at No access. If you plan to always write `script.txt` yourself, Speech to Text isn't used.
 - `ffmpeg` and `uv`: `brew install ffmpeg uv`
 
 ## Install
