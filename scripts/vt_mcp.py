@@ -46,6 +46,8 @@ def _run(fn, **kw) -> str:
             _ensure_jobs_dir()
             vt.check_tools()
             fn(SimpleNamespace(**kw))
+    except vt.VTError as e:
+        raise RuntimeError(f"{buf.getvalue().strip()}\n\nERROR: {e}".strip()) from None
     except SystemExit:
         raise RuntimeError(buf.getvalue().strip() or "failed") from None
     return buf.getvalue().strip() or "done"

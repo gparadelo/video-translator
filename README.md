@@ -57,6 +57,11 @@ If a cut is detected wrong, or you want a sync point inside a clip (e.g. the mom
 uv run scripts/vt.py run <job>            # all default languages
 uv run scripts/vt.py run <job> de fr      # just these
 ```
-This analyzes the video (transcribing it if there's no `script.txt`), translates each language, voices it, lets Claude rewrite beats that don't fit (up to 3 rounds), and renders. An existing `work/<lang>/script.json` is reused; `--retranslate` makes a fresh one, `--no-render` stops before rendering so you can check the reports. Model and effort are under `[claude]` in [config.default.toml](config.default.toml). `uv run scripts/vt.py --help` lists the single steps.
+This analyzes the video (transcribing it if there's no `script.txt`, then letting Claude fix misspelled names), translates each language, voices it, lets Claude rewrite beats that don't fit (up to 3 rounds), and renders. An existing `work/<lang>/script.json` is reused; `--retranslate` makes a fresh one, `--no-render` stops before rendering so you can check the reports. Model and effort are under `[claude]` in [config.default.toml](config.default.toml).
 
-Unlike the plugin, this doesn't fix the spelling of names in a transcribed `script.txt`: check it after the first `analyze` if names matter.
+To check the transcript before paying for voices, run it in two halves:
+```
+uv run scripts/vt.py prepare <job>        # transcribe, fix names, analyze; then check script.txt / cuts.txt
+uv run scripts/vt.py produce <job> de fr  # translate, voice, fit, render (re-analyzes if you edited them)
+```
+For the name check, a `reference.txt` (or `script_*.txt`) in the job folder gives Claude the right spelling. A `job.toml` in the job folder overrides settings for that job only, e.g. `languages`, or `voice_id` under `[elevenlabs]`. `uv run scripts/vt.py --help` lists the single steps.
