@@ -1,10 +1,21 @@
 {
   "name": "video-translator",
   "displayName": "Video Translator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Translate a short-form voiceover video into other languages with your ElevenLabs voice, re-timing the clips so every cut still lands on its word.",
   "author": { "name": "Gonzalo Paradelo" },
   "keywords": ["video", "translation", "elevenlabs", "voiceover", "ffmpeg"],
+  "mcpServers": {
+    "vt": {
+      "command": "uv",
+      "args": ["run", "--quiet", "--script", "${CLAUDE_PLUGIN_ROOT}/scripts/vt_mcp.py"],
+      "env": {
+        "ELEVENLABS_API_KEY": "${user_config.elevenlabs_api_key}",
+        "ELEVENLABS_VOICE_ID": "${user_config.voice_id}",
+        "VT_JOBS_DIR": "${user_config.jobs_dir}"
+      }
+    }
+  },
   "userConfig": {
     "elevenlabs_api_key": {
       "type": "string",
@@ -22,8 +33,8 @@
     "jobs_dir": {
       "type": "directory",
       "title": "Jobs folder",
-      "description": "Folder with one subfolder per video (the video + script.txt). Results go inside each subfolder.",
-      "required": true
+      "description": "Where your videos go, one subfolder per video. Keep the default, or type a full path such as ~/Movies/Translations (tip: drag a folder from Finder into Terminal to paste its path). Created if it doesn't exist.",
+      "default": "~/Documents/Video Translations"
     }
   }
 }

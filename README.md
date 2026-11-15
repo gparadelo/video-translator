@@ -13,7 +13,9 @@ In Claude Code:
 /plugin marketplace add gparadelo/video-translator
 /plugin install video-translator@video-translator
 ```
-Claude Code then asks for your **ElevenLabs API key** (stored in your system keychain, never in a file), your **voice ID**, and your **jobs folder** (where your videos live). You can change them later in `/plugin` → video-translator → Configure.
+Claude Code then asks for your **ElevenLabs API key** (stored in your system keychain, never in a file), your **voice ID**, and your **jobs folder**: where your videos live. The jobs folder defaults to `~/Documents/Video Translations` and is created on first use. Any other folder needs a full path such as `~/Movies/Translations`; a relative path counts from your home folder. You can change all three later in `/plugin` → video-translator → Configure.
+
+A step-by-step guide to share with new users is in [docs/setup-guide.html](docs/setup-guide.html).
 
 Run `/video-translator:setup` to check everything is in place.
 

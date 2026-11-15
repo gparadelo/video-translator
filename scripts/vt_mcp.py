@@ -27,12 +27,23 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 mcp = FastMCP("video-translator")
 
 
+def _ensure_jobs_dir():
+    """Create the jobs folder on first use, so the default works without any setup."""
+    jd = vt.jobs_dir()
+    if jd and not jd.exists():
+        try:
+            jd.mkdir(parents=True)
+        except OSError:
+            pass
+
+
 def _run(fn, **kw) -> str:
     """Run a vt command, capturing its output (stdout is the MCP channel, so nothing may print there)."""
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             vt.load_env()
+            _ensure_jobs_dir()
             vt.check_tools()
             fn(SimpleNamespace(**kw))
     except SystemExit:
@@ -50,6 +61,7 @@ def setup_status() -> str:
     """Check the setup: ffmpeg/ffprobe/uv installed, ElevenLabs key and voice configured, jobs folder,
     target languages, and the jobs found. Never reveals the key."""
     vt.load_env()
+    _ensure_jobs_dir()
     jd = vt.jobs_dir()
     cfg = vt.config(None)
     lines = [
@@ -57,7 +69,7 @@ def setup_status() -> str:
         f"ffprobe: {'ok' if shutil.which('ffprobe') else 'MISSING (brew install ffmpeg)'}",
         f"ElevenLabs API key: {'set' if _is_set('ELEVENLABS_API_KEY') else 'NOT SET'}",
         f"ElevenLabs voice ID: {'set' if _is_set('ELEVENLABS_VOICE_ID') else 'NOT SET'}",
-        f"jobs folder: {jd if jd else 'NOT SET'}{'' if not jd or jd.is_dir() else ' (does not exist)'}",
+        f"jobs folder: {jd if jd else 'NOT SET'}{'' if not jd or jd.is_dir() else ' (does not exist and could not be created)'}",
         f"target languages: {', '.join(cfg.get('languages', []))}",
         f"config override: {jd / 'config.toml' if jd and (jd / 'config.toml').exists() else 'none (using defaults)'}",
     ]

@@ -50,9 +50,17 @@ def die(msg: str):
     sys.exit(1)
 
 
+DEFAULT_JOBS_DIR = "~/Documents/Video Translations"
+
+
 def jobs_dir() -> Path | None:
-    v = os.environ.get("VT_JOBS_DIR", "").strip()
-    return Path(v).expanduser() if v and not v.startswith("${") else None
+    """The folder that holds the jobs. `~` is expanded, and a relative path counts from the home
+    folder, so it means the same thing whichever folder Claude Code was started in."""
+    v = os.environ.get("VT_JOBS_DIR", "").strip().strip('"').strip("'")
+    if not v or v.startswith("${"):
+        v = DEFAULT_JOBS_DIR
+    p = Path(v).expanduser()
+    return p if p.is_absolute() else Path.home() / p
 
 
 def load_env():
