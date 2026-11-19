@@ -250,7 +250,10 @@ function Review({ job, act }: { job: Job; act: Act }) {
 /** One card per language: its progress, or the video to watch and download. */
 function Outputs({ job, outputs }: { job: Job; outputs: Output[] }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
+  const ready = outputs.filter((o) => o.status === "done" && o.output_key);
   return (
+    <>
+    {ready.length > 0 && <DownloadAll jobId={job.id} outputs={ready} />}
     <div className="grid gap-4 sm:grid-cols-2">
       {outputs.map((o) => (
         <Card key={o.lang} className="flex flex-col gap-3">
@@ -294,6 +297,43 @@ function Outputs({ job, outputs }: { job: Job; outputs: Output[] }) {
           <Pill tone="idle">Waiting</Pill>
         </Card>
       ))}
+    </div>
+    </>
+  );
+}
+
+/**
+ * Downloads every finished language, one after another. Each one goes through the same route as its own
+ * Download button (a signed R2 link sent as an attachment), so the files go straight from R2 to the browser.
+ * The pause between them keeps browsers from dropping all but the first; they may ask once to allow
+ * this site to download several files.
+ */
+function DownloadAll({ jobId, outputs }: { jobId: string; outputs: Output[] }) {
+  const [busy, setBusy] = useState(false);
+  const total = outputs.reduce((n, o) => n + (o.output_bytes ?? 0), 0);
+
+  async function downloadAll() {
+    setBusy(true);
+    for (const [i, o] of outputs.entries()) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+      const a = document.createElement("a");
+      a.href = `/api/jobs/${jobId}/files/${o.lang}`;
+      a.download = ""; // a download, not a navigation, so the next one doesn't cancel this one
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button kind="plain" disabled={busy} onClick={downloadAll}>
+        {busy ? "Downloading…" : `Download all (${outputs.length})${total ? ` · ${megabytes(total)}` : ""}`}
+      </Button>
+      {outputs.length > 1 && (
+        <p className="text-xs text-neutral-500">Your browser may ask once to allow several downloads.</p>
+      )}
     </div>
   );
 }
