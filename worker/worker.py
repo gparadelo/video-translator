@@ -75,15 +75,27 @@ class Database:
         self.s = requests.Session()
         self.s.headers.update({"apikey": key, "Authorization": f"Bearer {key}"})
 
+    def send(self, method: str, path: str, **kw) -> requests.Response:
+        """One request, retried when the connection drops. The server closes connections that sat idle
+        (e.g. during a long render or upload), and requests only finds out when it reuses one."""
+        for attempt in range(4):
+            try:
+                return self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt == 3:
+                    raise
+                say(f"database connection dropped ({type(e).__name__}), retrying...")
+                self.s.close()  # drop the dead pooled connections; the next request opens a new one
+                time.sleep(2 * (attempt + 1))
+
     def rpc(self, fn: str, **args):
-        r = self.s.post(f"{self.url}/rest/v1/rpc/{fn}", json=args, timeout=30)
+        r = self.send("POST", f"/rest/v1/rpc/{fn}", json=args)
         if r.status_code >= 400:
             raise RuntimeError(f"{fn} failed ({r.status_code}): {r.text[:300]}")
         return r.json() if r.content else None
 
     def profile(self, user_id: str) -> dict:
-        r = self.s.get(f"{self.url}/rest/v1/profiles", timeout=30,
-                       params={"id": f"eq.{user_id}", "select": "voice_id,voice_ids"})
+        r = self.send("GET", "/rest/v1/profiles", params={"id": f"eq.{user_id}", "select": "voice_id,voice_ids"})
         r.raise_for_status()
         rows = r.json()
         return rows[0] if rows else {}
