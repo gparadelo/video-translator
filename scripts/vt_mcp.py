@@ -106,7 +106,7 @@ def plan(job: str, lang: str) -> str:
 
 @mcp.tool()
 def render(job: str, lang: str) -> str:
-    """Render out/<job>_<lang>.mp4 from the last plan. Takes a few minutes for a 4K video."""
+    """Render out/<job>_<lang>.mp4 from the last plan. Output is the source video's resolution (1080p stays 1080p, 4K stays 4K). Takes a few minutes for a 4K video."""
     return _run(vt.cmd_render, job=job, lang=lang)
 
 

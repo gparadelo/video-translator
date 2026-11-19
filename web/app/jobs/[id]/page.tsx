@@ -286,7 +286,7 @@ function Outputs({ job, outputs }: { job: Job; outputs: Output[] }) {
               href={`/api/jobs/${job.id}/files/${o.lang}`}
               className="self-start rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
             >
-              Download 4K{o.output_bytes ? ` · ${megabytes(o.output_bytes)}` : ""}
+              Download{o.output_bytes ? ` · ${megabytes(o.output_bytes)}` : ""}
             </a>
           )}
         </Card>

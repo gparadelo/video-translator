@@ -261,7 +261,7 @@ class Job:
             self.output(lang, "done", p_seconds=res["seconds"], p_flags=res["flags"],
                         p_report=Path(res["report"]).read_text(), p_output_key=f"{base}.mp4",
                         p_output_bytes=out.stat().st_size, p_preview_key=f"{base}_preview.mp4")
-            out.unlink()  # the 4K file is in storage now; the rest of the folder stays for re-runs
+            out.unlink()  # the full-size file is in storage now; the rest of the folder stays for re-runs
             done += 1
         # every language failed -> the job failed; some failed -> done, with those marked failed
         self.finish(None if done else errors[0])

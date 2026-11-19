@@ -3,7 +3,7 @@ import { fail } from "@/lib/api";
 import { downloadUrl } from "@/lib/r2";
 import { getUser } from "@/lib/supabase/server";
 
-// GET /api/jobs/<id>/files/<lang>            -> redirects to the 4K video, as a download
+// GET /api/jobs/<id>/files/<lang>            -> redirects to the full-size video (source resolution), as a download
 // GET /api/jobs/<id>/files/<lang>?kind=preview -> redirects to the small copy, to play in the page
 // The redirect target is a signed link that works for one hour.
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/jobs/[id]/files/[lang]">) {

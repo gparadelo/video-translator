@@ -195,6 +195,34 @@ def probe(path: Path) -> dict:
     return json.loads(r.stdout)
 
 
+def video_size(path: Path) -> tuple[int, int]:
+    """The size the video is shown at (width, height), with phone rotation applied, as ffmpeg decodes it."""
+    vs = next(s for s in probe(path)["streams"] if s["codec_type"] == "video")
+    w, h = int(vs["width"]), int(vs["height"])
+    rot = vs.get("tags", {}).get("rotate")
+    for sd in vs.get("side_data_list", []):
+        if "rotation" in sd:
+            rot = sd["rotation"]
+    if rot is not None and abs(int(float(rot))) % 180 == 90:
+        w, h = h, w
+    return w, h
+
+
+def render_size(src_w: int, src_h: int) -> tuple[int, int]:
+    """Output size: the source's own size (never upscaled), rounded down to even numbers for the encoder."""
+    return max(2, src_w - src_w % 2), max(2, src_h - src_h % 2)
+
+
+def scaled_bitrate(bitrate: str, w: int, h: int) -> str:
+    """`bitrate` is for 4K (3840x2160); smaller videos get less, a bit more than in proportion to pixels."""
+    m = re.fullmatch(r"([\d.]+)([kKmM]?)", bitrate.strip())
+    if not m:
+        return bitrate
+    bps = float(m[1]) * {"": 1, "k": 1e3, "m": 1e6}[m[2].lower()]
+    bps *= (w * h / (3840 * 2160)) ** 0.75
+    return f"{max(bps, 1e6) / 1e3:.0f}k"
+
+
 def media_duration(path: Path) -> float:
     return float(probe(path)["format"]["duration"])
 
@@ -1048,15 +1076,17 @@ def cmd_render(a):
     # video segments
     base = A["video"]["path"]
     vcodec = R["video_codec"]
-    venc = ["-c:v", vcodec, "-b:v", R["video_bitrate"], "-tag:v", "hvc1"] if "hevc" in vcodec else \
-        ["-c:v", vcodec, "-b:v", R["video_bitrate"]]
+    W, H = render_size(*video_size(Path(base)))  # same size as the source: 1080p stays 1080p, 4K stays 4K
+    vbr = scaled_bitrate(R["video_bitrate"], W, H)
+    log(f"{a.lang}: rendering at {W}x{H}, {vbr}", stage="render", lang=a.lang)
+    venc = ["-c:v", vcodec, "-b:v", vbr, "-tag:v", "hvc1"] if "hevc" in vcodec else ["-c:v", vcodec, "-b:v", vbr]
     if "hevc" in vcodec:
         venc += ["-profile:v", "main10", "-pix_fmt", "p010le"]
     venc += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
     lst = []
     for s in plan["segments"]:
         f = seg_dir / f"{s['seg']:03d}.mp4"
-        vf = f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},tpad=stop_mode=clone:stop_duration=1"
+        vf = f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop_duration=1"
         sh(["ffmpeg", "-y", "-v", "error", "-ss", f"{s['src_start']:.4f}", "-t", f"{s['src_len'] + 0.1:.4f}",
             "-i", base, "-an", "-vf", vf, "-frames:v", str(s["frames"]), *venc, str(f)])
         lst.append(f"file '{f}'")
@@ -1072,7 +1102,7 @@ def cmd_render(a):
 
 
 def make_preview(video: Path, out: Path) -> Path:
-    """A small H.264 copy (long side 1280) that every browser plays; the 4K HEVC output is for downloading."""
+    """A small H.264 copy (long side 1280) that every browser plays; the full-size HEVC output (the source's resolution) is for downloading."""
     scale = "scale='if(gt(iw,ih),1280,-2)':'if(gt(iw,ih),-2,1280)'"
     sh(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-vf", scale, "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "24", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)])

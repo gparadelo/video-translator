@@ -40,5 +40,5 @@ fix_names = true       # after transcribing, let Claude fix misspelled names (us
 
 [render]
 video_codec = "hevc_videotoolbox"
-video_bitrate = "20M"
+video_bitrate = "20M"    # for 4K; scaled down for smaller sources (1080p ~7M). Output keeps the source size
 audio_bitrate = "192k"
