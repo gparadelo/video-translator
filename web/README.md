@@ -20,6 +20,13 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Settings
+
+Copy `.env.example` to `.env.local` and fill it in (see [docs/web-setup.md](../docs/web-setup.md)); set the same
+variables in Vercel. `ANTHROPIC_API_KEY` is the Claude API key used server-side by the title translator
+(`/titles`, `app/api/titles/route.ts`), which turns one title into every supported language as plain
+ASCII titles of at most 60 characters.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

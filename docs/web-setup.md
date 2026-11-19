@@ -36,6 +36,12 @@ keeps it awake; if the Mac was off for longer, un-pause the project in the Supab
 4. **Keys:** R2 -> Manage API tokens -> create one with Object Read & Write on this bucket only. You get an
    access key ID and a secret; the account ID is on the R2 overview page.
 
+## 2b. Claude API key (title translator)
+The "Translate a title" page (`/titles`) calls the Claude API from the server. Create a key at
+console.anthropic.com -> API Keys and set it as `ANTHROPIC_API_KEY` in `web/.env.local` and in Vercel
+(Settings -> Environment Variables). It is only read on the server; never prefix it with `NEXT_PUBLIC_`.
+Only signed-in people can use the page, and every request is billed to that key.
+
 ## 3. Run the site
 ```
 cd web
