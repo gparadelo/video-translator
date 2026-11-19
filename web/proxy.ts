@@ -22,6 +22,15 @@ export async function proxy(request: NextRequest) {
   );
   const { data } = await supabase.auth.getClaims();
   const path = request.nextUrl.pathname;
+  // Supabase sends the link to the Site URL instead of /auth/confirm when the redirect address isn't
+  // on its allow list. Pass the code on rather than dropping it on the way to /login.
+  const code = request.nextUrl.searchParams.get("code");
+  if (code && !path.startsWith("/auth") && !path.startsWith("/api")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/auth/confirm";
+    url.search = `?code=${encodeURIComponent(code)}`;
+    return NextResponse.redirect(url);
+  }
   const open = path.startsWith("/login") || path.startsWith("/auth") || path.startsWith("/api");
   if (!data?.claims && !open) {
     const url = request.nextUrl.clone();

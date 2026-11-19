@@ -11,9 +11,18 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type") as EmailOtpType | null;
   const supabase = await createClient();
 
-  let error: unknown = "missing code";
+  let error: { code?: string; message: string } | null = { message: "missing code" };
   if (code) ({ error } = await supabase.auth.exchangeCodeForSession(code));
   else if (tokenHash && type) ({ error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash }));
+  if (!error) return NextResponse.redirect(`${origin}/`);
 
-  return NextResponse.redirect(`${origin}${error ? "/login?error=link" : "/"}`);
+  // A ?code= link only works in the browser that asked for it: that browser holds the matching
+  // secret (PKCE) in a cookie. Opening it from a mail app's own browser, or another device, fails.
+  console.error("sign-in link failed:", error.code, error.message);
+  const reason = /code verifier|code_verifier/i.test(error.message) || error.code === "bad_code_verifier"
+    ? "other_browser"
+    : /expired|invalid|already/i.test(error.message) || error.code === "otp_expired" || error.code === "flow_state_not_found"
+      ? "expired"
+      : "link";
+  return NextResponse.redirect(`${origin}/login?error=${reason}`);
 }
