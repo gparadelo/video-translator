@@ -7,8 +7,10 @@
 worker.py - does the web app's jobs on this Mac.
 
 It only makes outgoing connections: it asks the database for work, downloads the video from storage,
-runs the pipeline in scripts/vt.py up to the timing plan, and uploads, per language, the plan and the finished
-voice track. It doesn't render: the person's browser does (web/lib/render).
+runs the pipeline in scripts/vt.py up to the recorded voice (translation, TTS, and the timing plan, so Claude can
+rewrite beats that don't fit), and uploads, per language, the plan inputs: the TTS clips and inputs.json. The
+person's browser builds the timing plan and the voice track from them (web/lib/pipeline) and renders the video
+(web/lib/render).
 
 Every job runs on its owner's own ElevenLabs and Claude keys and voice, saved in the web app's Settings
 (encrypted; SECRETS_KEY opens them). The worker has no keys of its own, so nobody's job is billed to anyone else.
@@ -41,7 +43,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 import vt  # noqa: E402
 
-VERSION = "2"            # 2: uploads plan.json + voice.wav per language; the browser renders
+VERSION = "3"            # 3: uploads the plan inputs (TTS clips + inputs.json); the browser builds the rest
 POLL_SECONDS = 10        # how often to ask for work when idle (this also tells the app "I'm online")
 LEASE_SECONDS = 120      # a job whose worker is silent this long goes back to the queue
 KEEP_DAYS = 7            # job folders are kept this long, so re-running a language reuses the voice audio
@@ -258,9 +260,14 @@ class Job:
             self.beat.check()
         # Per-job settings for vt.py: this person's languages and voice. Every language gets its voice spelled
         # out, so nothing in a config.toml in the worker's folder (merged under job.toml) can pick another voice.
+        # A language keeps the voice it had when this job was first produced (jobs.voices: every language not
+        # pinned yet is pinned now, before any is voiced), whatever Settings say now.
         langs = self.row.get("languages") or []
         per_lang = self.prof.get("voice_ids") or {}
         voices = {l: per_lang.get(l) or self.prof["voice_id"] for l in langs}
+        if self.row["status"] == "producing":
+            voices = {**voices, **self.db.rpc("worker_pin_voices", p_worker=self.worker_id, p_job=self.id,
+                                              p_voices=voices)}
         lines = [f"languages = {json.dumps(langs)}", "[elevenlabs]",
                  f"voice_id = {json.dumps(self.prof['voice_id'])}",
                  "voice_ids = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in voices.items()) + " }"]
@@ -309,42 +316,44 @@ class Job:
         errors, done = [], 0
         for lang in langs:
             self.beat.check()
-            self.output(lang, "running")
+            gen = self.output(lang, "running")  # a new run of this language: its files go under g<gen>/
             try:
-                # one language at a time, so a problem with one doesn't stop the others
-                res = vt.produce(self.dir, [lang], render=False)[0]
-                plan, voice = self.render_inputs(lang)
+                # one language at a time, so a problem with one doesn't stop the others. The plan is still
+                # made here (vt.py), because Claude rewrites the beats that don't fit; the browser then builds
+                # the same plan and the voice track from the inputs uploaded below.
+                vt.produce(self.dir, [lang], render=False)
+                self.upload_inputs(lang, gen)
             except vt.VTError as e:
                 say(f"  {lang} failed: {e}")
                 errors.append(f"{lang}: {e}")
-                self.output(lang, "failed", p_flags=[str(e)])
+                self.output(lang, "failed", p_flags=[str(e)], p_generation=gen)
                 continue
-            # The browser renders the video from these (web/lib/render). See "Files in storage" in docs/web-setup.md.
-            base = f"u/{self.row['user_id']}/{self.id}/out/{lang}"
-            say(f"  {lang}: uploading the plan and the voice ({voice.stat().st_size / 1e6:.0f} MB)...")
-            self.store.upload(plan, f"{base}/plan.json", "application/json", self.transfer("upload", lang))
-            self.store.upload(voice, f"{base}/voice.wav", "audio/wav", self.transfer("upload", lang))
-            self.output(lang, "ready", p_seconds=res["seconds"], p_flags=res["flags"],
-                        p_report=Path(res["report"]).read_text(), p_plan_key=f"{base}/plan.json",
-                        p_voice_key=f"{base}/voice.wav")
+            self.output(lang, "voiced", p_generation=gen)
             done += 1
         # every language failed -> the job failed; some failed -> done, with those marked failed
         self.finish(None if done else errors[0])
 
-    def render_inputs(self, lang: str) -> tuple[Path, Path]:
-        """What the browser renders a language from: the plan without this Mac's paths (work/<lang>/plan_web.json)
-        and the finished voice track (work/<lang>/voice.wav)."""
+    def upload_inputs(self, lang: str, gen: int):
+        """What the browser builds the plan and the voice track from (web/lib/pipeline): the TTS clips with their
+        timing, then inputs.json (vt.plan_inputs), last, so it only exists once everything it names is there.
+        See "Files in storage" in docs/web-setup.md."""
         P = vt.job_paths(self.dir)
         A = vt.load_analysis(P)
-        plan = json.loads((P["work"] / lang / "plan.json").read_text())
-        vt.log(f"{lang}: mixing the voice...", stage="voice", lang=lang)
-        voice = vt.build_voice_track(P, A, plan)
-        web = P["work"] / lang / "plan_web.json"
-        web.write_text(json.dumps(vt.portable_plan(plan, vt.video_size(Path(A["video"]["path"]))), indent=1))
-        return web, voice
+        inputs, files = vt.plan_inputs(P, A, lang, vt.config(P["job"]))
+        base = f"u/{self.row['user_id']}/{self.id}/out/{lang}/g{gen}"
+        say(f"  {lang}: uploading the voice ({sum(f.stat().st_size for f in files) / 1e6:.1f} MB)...")
+        for f in files:
+            kind = "audio/mpeg" if f.suffix == ".mp3" else "application/json"
+            self.store.upload(f, f"{base}/tts/{f.name}", kind, self.transfer("upload", lang))
+            self.beat.check()
+        path = P["work"] / lang / "inputs.json"
+        path.write_text(json.dumps(inputs, ensure_ascii=False, indent=1))
+        self.store.upload(path, f"{base}/inputs.json", "application/json", self.transfer("upload", lang))
 
-    def output(self, lang: str, status: str, **fields):
-        self.db.rpc("worker_output", p_worker=self.worker_id, p_job=self.id, p_lang=lang, p_status=status, **fields)
+    def output(self, lang: str, status: str, **fields) -> int:
+        """Record a language's state; returns its run number (generation)."""
+        return self.db.rpc("worker_output", p_worker=self.worker_id, p_job=self.id, p_lang=lang, p_status=status,
+                           **fields)
 
     def finish(self, error: str | None):
         for attempt in range(5):  # the result must reach the database, or the job would be redone

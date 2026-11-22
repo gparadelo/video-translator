@@ -1052,6 +1052,15 @@ def atempo_chain(t: float) -> str:
     return f"atempo={t:.4f}"
 
 
+def clip_filter(b: dict) -> str:
+    """One beat's TTS clip as it goes into the voice track: samples [round(clip_in * SR), round(clip_out * SR))
+    of the decoded file, then its tempo. The whole file is decoded and trimmed (atrim), not seeked into: an MP3
+    seek starts the decoder cold and garbles the first ~25 ms. A tempo of exactly 1 is left alone (atempo would
+    still re-cut the audio). web/lib/pipeline/voice.ts does the same in the browser."""
+    f = f"atrim=start_sample={int(round(b['clip_in'] * SR))}:end_sample={int(round(b['clip_out'] * SR))}"
+    return f if b["tempo"] == 1.0 else f"{f},asetpts=PTS-STARTPTS,{atempo_chain(b['tempo'])}"
+
+
 def voice_filter(gain: float) -> str:
     """The voice track's finish: loudness matched to the original voiceover, then a limiter so nothing clips."""
     return f"volume={gain:.2f}dB,alimiter=limit=0.95:level=0"
@@ -1068,9 +1077,8 @@ def build_voice_track(P, A, plan) -> Path:
     total = plan["total_frames"] / plan["fps"]
     pcm = array.array("h", bytes(2 * int(round(total * SR))))
     for b in plan["beats"]:
-        r = sh(["ffmpeg", "-v", "error", "-ss", f"{b['clip_in']:.4f}", "-t", f"{b['clip_out'] - b['clip_in']:.4f}",
-                "-i", b["audio"], "-af", atempo_chain(b["tempo"]), "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"],
-               binary=True)
+        r = sh(["ffmpeg", "-v", "error", "-i", b["audio"], "-af", clip_filter(b), "-ac", "1", "-ar", str(SR),
+                "-f", "s16le", "-"], binary=True)
         clip = array.array("h", r.stdout)
         start = int(round(b["offset"] * SR))
         n = min(len(clip), len(pcm) - start)
@@ -1156,6 +1164,40 @@ def portable_plan(plan: dict, source_size: tuple[int, int]) -> dict:
             "beats": [{**b, "audio": Path(b["audio"]).name} for b in plan["beats"]],
             "source": {"width": source_size[0], "height": source_size[1]},
             "voice": {"file": "voice.wav", "sample_rate": SR, "channels": 2}}
+
+
+INPUTS_FORMAT = 1  # web/lib/pipeline/inputs.ts reads this; see "Files in storage" in docs/web-setup.md
+FIT_KEYS = ("video_speed_min", "video_speed_max", "trim_keep_min", "audio_tempo_min", "audio_tempo_max",
+            "sync_tolerance", "pause_min", "pause_max_extra")
+
+
+def plan_inputs(P, A, lang: str, cfg: dict) -> tuple[dict, list[Path]]:
+    """What the browser builds plan.json and voice.wav from (web/lib/pipeline): everything build_plan reads,
+    without this Mac's paths. Returns (inputs.json, the TTS files to upload next to it in tts/: every clip's
+    .mp3 and its .json with the word timing)."""
+    S = load_lang_script(P, A, lang)
+    index = json.loads((P["work"] / lang / "tts_index.json").read_text())
+    files, clips = [], []
+    for b, ix in zip(S["beats"], index):
+        mp3 = Path(ix["audio"])
+        files += [mp3, mp3.with_suffix(".json")]
+        clips.append({"beat": b["id"], "file": mp3.name, "speed": ix["speed"]})
+    v = A["video"]
+    inputs = {
+        "format": INPUTS_FORMAT, "lang": lang, "voice_id": voice_for(lang, cfg),
+        "analysis": {
+            "video": {"dur": v["dur"], "fps": v["fps"]},
+            "source": dict(zip(("width", "height"), video_size(Path(v["path"])))),
+            "speech_start": A["speech_start"], "speech_end": A["speech_end"], "base_lufs": A["base_lufs"],
+            "beats": [{"id": b["id"], "dur": b["dur"], "pause_after": b["pause_after"]} for b in A["beats"]],
+            "tokens": [{"beat": t["beat"]} for t in A["tokens"]],
+            "anchors": A["anchors"],
+        },
+        "fit": {k: cfg["fit"][k] for k in FIT_KEYS},
+        "script": [{k: b[k] for k in ("id", "text", "speed") if k in b} for b in S["beats"]],
+        "clips": clips,
+    }
+    return inputs, files
 
 
 def make_preview(video: Path, out: Path) -> Path:

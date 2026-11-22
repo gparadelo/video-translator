@@ -3,7 +3,7 @@ import { fail } from "@/lib/api";
 import { downloadUrl } from "@/lib/r2";
 import { getUser } from "@/lib/supabase/server";
 
-// GET /api/jobs/<id>/render/<lang> -> {name, source, plan, voice}: signed links (6 hours) to everything the
+// GET /api/jobs/<id>/render/<lang> -> {name, generation, source, plan, voice}: signed links (6 hours) to everything the
 // browser needs to render this language: the uploaded video (read in pieces with range requests), the
 // plan (plan.json) and the finished voice track (voice.wav). See "Files in storage" in docs/web-setup.md.
 export async function GET(_request: NextRequest, ctx: RouteContext<"/api/jobs/[id]/render/[lang]">) {
@@ -14,7 +14,7 @@ export async function GET(_request: NextRequest, ctx: RouteContext<"/api/jobs/[i
   // Row-level security only returns the person's own rows.
   const { data: out } = await supabase
     .from("job_outputs")
-    .select("status, plan_key, voice_key, jobs(name, source_key)")
+    .select("status, generation, plan_key, voice_key, jobs(name, source_key)")
     .eq("job_id", id)
     .eq("lang", lang)
     .maybeSingle();
@@ -28,5 +28,5 @@ export async function GET(_request: NextRequest, ctx: RouteContext<"/api/jobs/[i
     downloadUrl(out.plan_key, undefined, hours6),
     downloadUrl(out.voice_key, undefined, hours6),
   ]);
-  return NextResponse.json({ name: job.name ?? "video", source, plan, voice });
+  return NextResponse.json({ name: job.name ?? "video", generation: out.generation, source, plan, voice });
 }

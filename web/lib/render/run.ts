@@ -24,7 +24,7 @@ export async function checkBrowser(): Promise<string | null> {
   return null;
 }
 
-type Links = { name: string; source: string; plan: string; voice: string };
+type Links = { name: string; generation: number; source: string; plan: string; voice: string };
 
 async function getJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -44,6 +44,8 @@ async function fetchOk(url: string, what: string, signal?: AbortSignal) {
 
 type Loaded = {
   name: string;
+  /** the run of the language these files are from (job_outputs.generation) */
+  generation: number;
   plan: RenderPlan;
   source: Source;
   voice: Pcm | null;
@@ -66,7 +68,7 @@ async function load(jobId: string, lang: string, withVoice: boolean, signal?: Ab
   });
   try {
     const [width, height] = sourceSize(plan, source.width, source.height);
-    return { name: links.name, plan, source, voice, width, height };
+    return { name: links.name, generation: links.generation, plan, source, voice, width, height };
   } catch (e) {
     source.dispose();
     throw e;
@@ -89,9 +91,9 @@ export async function makePreview(jobId: string, lang: string, onProgress: (p: P
     const blob = new Blob([target.buffer!], { type: "video/mp4" });
     onProgress({ stage: "uploading", fraction: 0 });
     const { upload } = await api<{ upload: { url: string; headers: Record<string, string> } }>(
-      `/api/jobs/${jobId}/preview/${lang}`, { bytes: blob.size });
+      `/api/jobs/${jobId}/preview/${lang}`, { generation: job.generation, bytes: blob.size });
     await uploadVideo(blob, upload, (f) => onProgress({ stage: "uploading", fraction: f }), signal);
-    await api(`/api/jobs/${jobId}/preview/${lang}`, { bytes: blob.size, done: true });
+    await api(`/api/jobs/${jobId}/preview/${lang}`, { generation: job.generation, bytes: blob.size, done: true });
   } finally {
     job.source.dispose();
   }
