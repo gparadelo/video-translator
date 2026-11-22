@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { fail, generationOf, outputKey } from "@/lib/api";
+import { CHANNELS, SAMPLE_RATE } from "@/lib/pipeline/config";
 import { CLIP_FILE, metaFile, parseInputs } from "@/lib/pipeline/inputs";
 import { writeReport, type Plan } from "@/lib/pipeline/plan";
+import { pyFormat } from "@/lib/pipeline/py";
 import { parsePlan } from "@/lib/render/plan";
 import { downloadUrl, objectSize, readText, uploadUrl } from "@/lib/r2";
 import { getUser } from "@/lib/supabase/server";
@@ -91,8 +93,14 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[i
   } catch (e) {
     return fail(422, `the plan can't be used: ${(e as Error).message}`);
   }
-  const seconds = Math.round((plan.total_frames / plan.fps) * 100) / 100;
-  const flags = (plan.flags ?? []).map((f) => String(f.msg)).slice(0, 100);
+  // voice.wav is a 44-byte header and 16-bit samples: it must be as long as the video (within a frame), in the
+  // format the plan names, or the language would be ready but couldn't be rendered
+  const { sample_rate: rate, channels } = plan.voice;
+  const frames = (voiceBytes - 44) / (2 * channels);
+  if (rate !== SAMPLE_RATE || channels !== CHANNELS || Math.abs(frames - (plan.total_frames / plan.fps) * rate) > rate / plan.fps)
+    return fail(422, "the voice track doesn't fit the plan - prepare it again");
+  const seconds = Number(pyFormat(plan.total_frames / plan.fps, 2)); // vt.produce: round(seconds, 2)
+  const flags = (Array.isArray(plan.flags) ? plan.flags : []).slice(0, 100).map((f) => String(f?.msg ?? "").slice(0, 500));
   let report: string | null = null;
   try {
     report = writeReport(name, plan);
