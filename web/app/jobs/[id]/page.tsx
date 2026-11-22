@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { ReadyOutput, useBrowserSupport } from "@/components/RenderOutput";
 import { TitlesCard } from "@/components/Titles";
 import { Bar, Button, Card, Notice, Pill, StatusPill } from "@/components/ui";
 import {
@@ -19,6 +20,7 @@ import {
   type Output,
   type Worker,
 } from "@/lib/jobs";
+import { useRenderGuard } from "@/lib/render/guard";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
 
@@ -84,7 +86,8 @@ function JobView() {
 
   const waiting = job.status === "queued" || job.status === "approved";
   const working = job.status === "preparing" || job.status === "producing";
-  const showOutputs = outputs.length > 0 && (job.status === "producing" || job.status === "done" || job.status === "failed");
+  // also while more languages wait for the worker (approved), so a video rendering in this tab keeps going
+  const showOutputs = outputs.length > 0 && ["approved", "producing", "done", "failed"].includes(job.status);
 
   return (
     <Page>
@@ -104,7 +107,7 @@ function JobView() {
       {error && <Notice tone="bad">{error}</Notice>}
       {(waiting || working) && !online && (
         <Notice tone="action">
-          The render Mac is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
+          The worker Mac is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
         </Notice>
       )}
 
@@ -116,7 +119,7 @@ function JobView() {
         <Card className="flex flex-col gap-2">
           <p className="font-medium">
             {waiting
-              ? "Waiting for the render Mac to pick this up…"
+              ? "Waiting for the worker Mac to pick this up…"
               : (progressText(job.progress) ?? (job.status === "preparing" ? "Transcribing…" : "Translating…"))}
             {working && job.progress?.lang && ` (${langName(job.progress.lang)})`}
           </p>
@@ -147,7 +150,7 @@ function JobView() {
         <Review key={`${job.id}-${job.status}`} job={job} act={act} />
       )}
 
-      {showOutputs && <Outputs job={job} outputs={outputs} />}
+      {showOutputs && <Outputs job={job} outputs={outputs} refresh={refresh} />}
 
       {job.status === "done" && <MoreLanguages job={job} outputs={outputs} act={act} />}
     </Page>
@@ -259,15 +262,33 @@ function Review({ job, act }: { job: Job; act: Act }) {
   );
 }
 
-/** One card per language: its progress, or the video to watch and download. */
-function Outputs({ job, outputs }: { job: Job; outputs: Output[] }) {
+/**
+ * One card per language: its progress, or the video to watch and download. A language that is ready is
+ * rendered here in the browser (ReadyOutput); older projects have their videos in storage.
+ */
+function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refresh: () => Promise<void> }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
-  const ready = outputs.filter((o) => o.status === "done" && o.output_key);
+  const rendered = outputs.filter((o) => o.status === "done" && o.output_key);
+  const anyReady = outputs.some((o) => o.status === "ready");
+  const support = useBrowserSupport(anyReady); // older projects don't need the render code
+  const [busy, setBusy] = useState<string | null>(null); // the language rendering now: one at a time
+  useRenderGuard(busy !== null);
   return (
     <>
-    {ready.length > 0 && <DownloadAll jobId={job.id} outputs={ready} />}
+    {rendered.length > 0 && <DownloadAll jobId={job.id} outputs={rendered} />}
+    {anyReady && support && <Notice tone="action">{support}</Notice>}
     <div className="grid gap-4 sm:grid-cols-2">
-      {outputs.map((o) => (
+      {outputs.map((o) => o.status === "ready" ? (
+        <ReadyOutput
+          key={o.lang}
+          job={job}
+          output={o}
+          support={support}
+          othersBusy={busy !== null && busy !== o.lang}
+          onBusy={(b) => setBusy(b ? o.lang : null)}
+          onSaved={refresh}
+        />
+      ) : (
         <Card key={o.lang} className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">{langName(o.lang)}</h2>

@@ -9,7 +9,7 @@ import { getUser } from "@/lib/supabase/server";
 // Creates a project. It has a video (filename + bytes), a title, or both.
 // With a video: the job starts "uploading", and the answer has a link the browser uploads the video to:
 //   PUT upload.url with upload.headers and the file as the body, then POST /api/jobs/<id>/submit.
-// Title only: the job is "done" from the start (nothing for the render Mac to do) and upload is null.
+// Title only: the job is "done" from the start (nothing for the worker Mac to do) and upload is null.
 // Either way the title is translated afterwards with POST /api/jobs/<id>/title.
 export async function POST(request: NextRequest) {
   const { supabase, user } = await getUser();

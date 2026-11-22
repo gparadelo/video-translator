@@ -59,7 +59,7 @@ def die(msg: str):
 
 # Progress goes through one reporter, so the CLI can print it and a worker can forward it to the web app.
 # Every event has "msg" (text for a person, may be None) and optionally: "stage" (transcribe, align, cuts,
-# analyze, translate, rewrite, tts, plan, render, preview, done), "lang", "done"/"total" (counts within the stage),
+# analyze, translate, rewrite, tts, plan, voice, render, preview, done), "lang", "done"/"total" (counts within the stage),
 # "level" ("info" / "warning") and "usage" (API usage to bill: {"service", ...amounts}).
 _reporter = None
 
@@ -1052,7 +1052,57 @@ def atempo_chain(t: float) -> str:
     return f"atempo={t:.4f}"
 
 
+def voice_filter(gain: float) -> str:
+    """The voice track's finish: loudness matched to the original voiceover, then a limiter so nothing clips."""
+    return f"volume={gain:.2f}dB,alimiter=limit=0.95:level=0"
+
+
+def build_voice_track(P, A, plan) -> Path:
+    """The finished voice for one language: every beat's TTS clip at its tempo and offset, loudness matched to
+    the original voiceover and limited, made stereo the way ffmpeg does it (`-ac 2`: the mono voice on both
+    channels at -3 dB), exactly total_frames / fps long. Writes work/<lang>/voice.wav (16-bit PCM, 44.1 kHz,
+    2 channels) and returns its path. These are exactly the samples the AAC encoder gets: the CLI muxes this
+    file under its render, and the web app's worker uploads it for the browser to encode and mux."""
+    lang = plan["lang"]
+    wd = P["work"] / lang
+    total = plan["total_frames"] / plan["fps"]
+    pcm = array.array("h", bytes(2 * int(round(total * SR))))
+    for b in plan["beats"]:
+        r = sh(["ffmpeg", "-v", "error", "-ss", f"{b['clip_in']:.4f}", "-t", f"{b['clip_out'] - b['clip_in']:.4f}",
+                "-i", b["audio"], "-af", atempo_chain(b["tempo"]), "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"],
+               binary=True)
+        clip = array.array("h", r.stdout)
+        start = int(round(b["offset"] * SR))
+        n = min(len(clip), len(pcm) - start)
+        pcm[start:start + n] = clip[:n]
+    raw = wd / "voice_raw.pcm"
+    raw.write_bytes(pcm.tobytes())
+    plain = wd / "voice_plain.wav"
+    sh(["ffmpeg", "-y", "-v", "error", "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", str(raw), str(plain)])
+    raw.unlink()
+    gain = A["base_lufs"] - lufs(plain)
+    voice = wd / "voice.wav"
+    sh(["ffmpeg", "-y", "-v", "error", "-i", str(plain), "-af", voice_filter(gain), "-ac", "2", "-ar", str(SR),
+        "-c:a", "pcm_s16le", "-t", f"{total:.4f}", str(voice)])
+    plain.unlink()
+    return voice
+
+
+def segment_filter(s: dict, fps: float, W: int, H: int) -> str:
+    """How one clip is retimed: its frames slowed down or sped up, resampled to the output frame rate, scaled,
+    and the last frame held for as long as the clip needs (-frames:v ends it). web/lib/render/frames.ts picks
+    the same frames in the browser."""
+    return f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop=-1"
+
+
+def segment_cmd(base: str, s: dict, fps: float, W: int, H: int, venc: list[str], out: str) -> list[str]:
+    """The ffmpeg command that renders one clip of the plan: exactly s["frames"] frames."""
+    return ["ffmpeg", "-y", "-v", "error", "-ss", f"{s['src_start']:.4f}", "-t", f"{s['src_len'] + 0.1:.4f}",
+            "-i", str(base), "-an", "-vf", segment_filter(s, fps, W, H), "-frames:v", str(s["frames"]), *venc, out]
+
+
 def cmd_render(a):
+    """Render one language with ffmpeg (the plugin and the CLI; the web app renders in the browser)."""
     P = job_paths(a.job)
     cfg = config(P["job"])
     R = cfg["render"]
@@ -1068,23 +1118,8 @@ def cmd_render(a):
         shutil.rmtree(seg_dir)
     seg_dir.mkdir(parents=True)
 
-    # voice track
+    voice = build_voice_track(P, A, plan)
     total = plan["total_frames"] / fps
-    pcm = array.array("h", bytes(2 * int(round(total * SR))))
-    for b in plan["beats"]:
-        r = sh(["ffmpeg", "-v", "error", "-ss", f"{b['clip_in']:.4f}", "-t", f"{b['clip_out'] - b['clip_in']:.4f}",
-                "-i", b["audio"], "-af", atempo_chain(b["tempo"]), "-ac", "1", "-ar", str(SR), "-f", "s16le", "-"],
-               binary=True)
-        clip = array.array("h", r.stdout)
-        start = int(round(b["offset"] * SR))
-        n = min(len(clip), len(pcm) - start)
-        pcm[start:start + n] = clip[:n]
-    raw = wd / "voice.raw"
-    raw.write_bytes(pcm.tobytes())
-    voice = wd / "voice.wav"
-    sh(["ffmpeg", "-y", "-v", "error", "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", str(raw), str(voice)])
-    raw.unlink()
-    gain = A["base_lufs"] - lufs(voice)
 
     # video segments
     base = A["video"]["path"]
@@ -1099,9 +1134,7 @@ def cmd_render(a):
     lst = []
     for s in plan["segments"]:
         f = seg_dir / f"{s['seg']:03d}.mp4"
-        vf = f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop_duration=1"
-        sh(["ffmpeg", "-y", "-v", "error", "-ss", f"{s['src_start']:.4f}", "-t", f"{s['src_len'] + 0.1:.4f}",
-            "-i", base, "-an", "-vf", vf, "-frames:v", str(s["frames"]), *venc, str(f)])
+        sh(segment_cmd(base, s, fps, W, H, venc, str(f)))
         lst.append(f"file '{f}'")
         log(None, stage="render", lang=a.lang, done=s["seg"] + 1, total=len(plan["segments"]))
     (seg_dir / "list.txt").write_text("\n".join(lst) + "\n")
@@ -1109,9 +1142,20 @@ def cmd_render(a):
     out = P["out"] / f"{P['job'].name}_{a.lang}.mp4"
     sh(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(seg_dir / "list.txt"),
         "-i", str(voice), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-        "-af", f"volume={gain:.2f}dB,alimiter=limit=0.95:level=0", "-ac", "2",
         "-c:a", "aac", "-b:a", R["audio_bitrate"], "-movflags", "+faststart", "-t", f"{total:.4f}", str(out)])
     log(f"done: {out} ({media_duration(out):.2f}s)")
+
+
+PLAN_FORMAT = 1  # web/lib/render/plan.ts reads this; raise it when the browser can't read older plans
+
+
+def portable_plan(plan: dict, source_size: tuple[int, int]) -> dict:
+    """plan.json as the web app keeps it in storage: the plan without this Mac's file paths, plus what the
+    browser needs to render it. See "Files in storage" in docs/web-setup.md."""
+    return {**plan, "format": PLAN_FORMAT,
+            "beats": [{**b, "audio": Path(b["audio"]).name} for b in plan["beats"]],
+            "source": {"width": source_size[0], "height": source_size[1]},
+            "voice": {"file": "voice.wav", "sample_rate": SR, "channels": 2}}
 
 
 def make_preview(video: Path, out: Path) -> Path:

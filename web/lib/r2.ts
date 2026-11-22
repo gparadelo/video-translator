@@ -34,8 +34,8 @@ export function uploadUrl(key: string, bytes: number, contentType: string) {
   );
 }
 
-/** Link to play (inline) or download (with a file name) one object. */
-export function downloadUrl(key: string, filename?: string) {
+/** Link to play (inline) or download (with a file name) one object. Valid for `seconds` (default one hour). */
+export function downloadUrl(key: string, filename?: string, seconds = 60 * 60) {
   return getSignedUrl(
     r2(),
     new GetObjectCommand({
@@ -43,7 +43,7 @@ export function downloadUrl(key: string, filename?: string) {
       Key: key,
       ResponseContentDisposition: filename ? `attachment; filename="${filename.replace(/[^\w.\- ]/g, "_")}"` : undefined,
     }),
-    { expiresIn: 60 * 60 },
+    { expiresIn: seconds },
   );
 }
 
