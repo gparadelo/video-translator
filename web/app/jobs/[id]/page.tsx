@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { ProduceOutput } from "@/components/ProduceOutput";
 import { ReadyOutput, useBrowserSupport } from "@/components/RenderOutput";
 import { TitlesCard } from "@/components/Titles";
 import { VoicedOutput } from "@/components/VoicedOutput";
@@ -85,17 +86,19 @@ function JobView() {
     );
   }
 
+  // the worker's part: transcribing (queued, preparing) and timing an edited transcript (approved, aligning)
   const waiting = job.status === "queued" || job.status === "approved";
-  const working = job.status === "preparing" || job.status === "producing";
-  // also while more languages wait for the worker (approved), so a video rendering in this tab keeps going
-  const showOutputs = outputs.length > 0 && ["approved", "producing", "done", "failed"].includes(job.status);
+  const working = job.status === "preparing" || job.status === "aligning";
+  const producing = job.status === "producing"; // this page makes the languages
+  // also while the worker times an edited transcript (approved), so a video rendering in this tab keeps going
+  const showOutputs = outputs.length > 0 && ["approved", "aligning", "producing", "done", "failed"].includes(job.status);
 
   return (
     <Page>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="min-w-0 truncate text-xl font-semibold">{job.name}</h1>
         <StatusPill status={job.status} />
-        {(waiting || working || job.status === "needs_review" || job.status === "uploading") && (
+        {(waiting || working || producing || job.status === "needs_review" || job.status === "uploading") && (
           <button
             onClick={() => confirm("Cancel this video?") && act("cancel_job")}
             className="ml-auto text-sm text-neutral-500 underline"
@@ -121,13 +124,13 @@ function JobView() {
           <p className="font-medium">
             {waiting
               ? "Waiting for the worker Mac to pick this up…"
-              : (progressText(job.progress) ?? (job.status === "preparing" ? "Transcribing…" : "Translating…"))}
+              : (progressText(job.progress) ?? (job.status === "preparing" ? "Transcribing…" : "Timing the transcript…"))}
             {working && job.progress?.lang && ` (${langName(job.progress.lang)})`}
           </p>
           {working && job.progress?.total ? <Bar fraction={(job.progress.done ?? 0) / job.progress.total} /> : null}
           <p className="text-sm text-neutral-500">
-            {job.status === "producing" || job.status === "approved"
-              ? "Each language takes a few minutes. You can close this page and come back."
+            {job.status === "approved" || job.status === "aligning"
+              ? "The worker times the transcript again (it was edited, or made by an older version). Then the translation starts on this page."
               : "This takes a minute or two. Then you check the transcript before anything is translated."}
           </p>
         </Card>
@@ -151,7 +154,14 @@ function JobView() {
         <Review key={`${job.id}-${job.status}`} job={job} act={act} />
       )}
 
-      {showOutputs && <Outputs job={job} outputs={outputs} refresh={refresh} />}
+      {producing && (
+        <Notice tone="action">
+          The languages are being made on this page, with your own keys. Keep it open until each one is done. If
+          you close it, it carries on from where it stopped the next time you open it.
+        </Notice>
+      )}
+
+      {showOutputs && <Outputs job={job} outputs={outputs} refresh={refresh} act={act} />}
 
       {job.status === "done" && <MoreLanguages job={job} outputs={outputs} act={act} />}
     </Page>
@@ -267,7 +277,7 @@ function Review({ job, act }: { job: Job; act: Act }) {
  * One card per language: its progress, or the video to watch and download. A language that is ready is
  * rendered here in the browser (ReadyOutput); older projects have their videos in storage.
  */
-function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refresh: () => Promise<void> }) {
+function Outputs({ job, outputs, refresh, act }: { job: Job; outputs: Output[]; refresh: () => Promise<void>; act: Act }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
   const rendered = outputs.filter((o) => o.status === "done" && o.output_key);
   // voiced: this tab builds the voice track first; ready: it renders. Older projects need neither.
@@ -280,7 +290,9 @@ function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refre
     {rendered.length > 0 && <DownloadAll jobId={job.id} outputs={rendered} />}
     {anyReady && support && <Notice tone="action">{support}</Notice>}
     <div className="grid gap-4 sm:grid-cols-2">
-      {outputs.map((o) => o.status === "voiced" ? (
+      {outputs.map((o) => job.status === "producing" && (o.status === "pending" || o.status === "running") ? (
+        <ProduceOutput key={`${o.lang}-${o.generation}`} job={job} output={o} onChanged={refresh} />
+      ) : o.status === "voiced" ? (
         <VoicedOutput key={`${o.lang}-${o.generation}`} job={job} output={o} support={support} onSaved={refresh} />
       ) : o.status === "ready" ? (
         <ReadyOutput
@@ -318,6 +330,17 @@ function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refre
             </div>
           )}
           {o.status === "failed" && <p className="text-sm text-red-700 dark:text-red-300">{o.flags[0]}</p>}
+          {o.status === "failed" && ["producing", "done", "failed"].includes(job.status) && (
+            <Button
+              kind="plain"
+              className="self-start"
+              onClick={() => job.status === "producing"
+                ? act("start_run", { p_lang: o.lang })
+                : act("approve_job", { p_languages: [o.lang] })}
+            >
+              Try again
+            </Button>
+          )}
           {o.status === "done" && o.output_key && (
             <a
               href={`/api/jobs/${job.id}/files/${o.lang}`}

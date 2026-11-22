@@ -6,7 +6,9 @@ export type Progress = { stage?: string; lang?: string; done?: number; total?: n
 export type Job = {
   id: string;
   name: string;
-  status: "uploading" | "queued" | "preparing" | "needs_review" | "approved" | "producing" | "done" | "failed" | "canceled";
+  // queued/preparing and approved/aligning are the worker's (transcribing, timing an edited transcript);
+  // producing is this app's: the job page makes each language (lib/produce)
+  status: "uploading" | "queued" | "preparing" | "needs_review" | "approved" | "aligning" | "producing" | "done" | "failed" | "canceled";
   languages: string[];
   base_lang: string | null;
   script: string | null;
@@ -25,9 +27,10 @@ export type Job = {
 
 export type Output = {
   lang: string;
-  // voiced: the worker recorded the voice (inputs_key); the browser builds the plan and the voice track
+  // pending: asked for, the job page starts a run; running: the job page is making it (lib/produce).
+  // voiced: the voice is recorded (inputs_key); the browser builds the plan and the voice track
   // (lib/pipeline). ready: plan and voice track are there; the browser renders the video (lib/render).
-  // done: rendered by an older worker (output_key is the full video).
+  // done: rendered by an older worker (output_key is the full video). failed: flags[0] says why.
   status: "pending" | "running" | "voiced" | "ready" | "done" | "failed";
   /** the run of this language the files belong to; a new translation starts a new one */
   generation: number;
@@ -58,7 +61,8 @@ export const STATUS: Record<Job["status"], { label: string; tone: "idle" | "busy
   queued: { label: "Waiting to start", tone: "idle" },
   preparing: { label: "Transcribing", tone: "busy" },
   needs_review: { label: "Ready for your review", tone: "action" },
-  approved: { label: "Waiting to translate", tone: "idle" },
+  approved: { label: "Waiting to start", tone: "idle" },
+  aligning: { label: "Getting ready", tone: "busy" },
   producing: { label: "Translating", tone: "busy" },
   done: { label: "Ready", tone: "good" },
   failed: { label: "Failed", tone: "bad" },
