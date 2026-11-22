@@ -1202,13 +1202,16 @@ def plan_inputs(P, A, lang: str, cfg: dict) -> tuple[dict, list[Path]]:
         mp3 = Path(ix["audio"])
         files += [mp3, mp3.with_suffix(".json")]
         clips.append({"beat": b["id"], "file": mp3.name, "speed": ix["speed"]})
-    pa = portable_analysis(A, video_size(Path(A["video"]["path"])))
+    v = A["video"]
     inputs = {
         "format": INPUTS_FORMAT, "lang": lang, "voice_id": voice_for(lang, cfg),
-        "analysis": {
-            **{k: pa[k] for k in ("video", "source", "speech_start", "speech_end", "base_lufs")},
-            "beats": [{"id": b["id"], "dur": b["dur"], "pause_after": b["pause_after"]} for b in pa["beats"]],
-            **{k: pa[k] for k in ("tokens", "anchors")},
+        "analysis": {  # what portable_analysis has, but the texts (web/lib/produce/analysis.ts: inputsAnalysis)
+            "video": {"dur": v["dur"], "fps": v["fps"]},
+            "source": dict(zip(("width", "height"), video_size(Path(v["path"])))),
+            "speech_start": A["speech_start"], "speech_end": A["speech_end"], "base_lufs": A["base_lufs"],
+            "beats": [{"id": b["id"], "dur": b["dur"], "pause_after": b["pause_after"]} for b in A["beats"]],
+            "tokens": [{"beat": t["beat"]} for t in A["tokens"]],
+            "anchors": A["anchors"],
         },
         "fit": {k: cfg["fit"][k] for k in FIT_KEYS},
         "script": [{k: b[k] for k in ("id", "text", "speed") if k in b} for b in S["beats"]],
