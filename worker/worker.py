@@ -4,7 +4,9 @@
 # dependencies = ["requests", "anthropic", "boto3", "cryptography"]
 # ///
 """
-worker.py - does the web app's jobs on this Mac.
+worker.py - did the web app's jobs on this Mac. RETIRED: the web app now prepares every video in the person's browser
+(web/lib/prepare), so this only prints that and exits; remove it with `worker/install-service.sh remove`. It is
+deleted in phase 5. What it did:
 
 It only makes outgoing connections: it asks the database for work, downloads the video from storage, and
 analyzes it with scripts/vt.py: transcribes the voiceover and fixes the spelling of names (prepare), times every
@@ -381,10 +383,17 @@ def clean_up(root: Path):
                 shutil.rmtree(d, ignore_errors=True)
 
 
+RETIRED = ("The worker isn't needed any more: the web app prepares every video in the person's browser (since the "
+           "migration 20261126000000_browser_prepare.sql, which removed the worker's database functions). Remove it from "
+           "this Mac with `worker/install-service.sh remove`.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--once", action="store_true", help="do the waiting jobs, then exit")
     a = ap.parse_args()
+    say(RETIRED)  # nothing hands it work any more (phase 5 deletes this file)
+    sys.exit(0)
 
     load_env_file(HERE / ".env")
     root = Path(os.environ.get("VT_WORKER_DIR") or "~/Library/Application Support/Video Translator Worker").expanduser()
