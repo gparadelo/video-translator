@@ -44,7 +44,9 @@ export function parseMedia(json: unknown): Media {
   if (!num(m.base_lufs) || m.base_lufs < -200 || m.base_lufs > 10) throw bad("loudness");
   if (!Array.isArray(m.cuts) || m.cuts.length > 10_000 || !m.cuts.every(num)) throw bad("cuts");
   for (let i = 1; i < m.cuts.length; i++) if (!(m.cuts[i] > m.cuts[i - 1])) throw bad("cuts out of order");
-  if (m.cuts.some((t) => !(t > 0.05 && t < m.dur! - 0.05))) throw bad("a cut outside the video");
+  // (vt.detect_cuts keeps 0.05 s from either end; the cuts of an older worker's analysis.json, rounded to 3 decimals
+  // as cuts.txt has them, can land on 0.050 itself, e.g. the third frame at 59.94 fps)
+  if (m.cuts.some((t) => !(t > 0 && t < m.dur!))) throw bad("a cut outside the video");
   if (!m.audio || !(m.audio in AUDIO_FILES)) throw bad("no voiceover");
   if (!int(m.audio_bytes, 1, MAX_AUDIO_BYTES)) throw bad("voiceover size");
   if (m.from !== "browser" && m.from !== "analysis") throw bad("origin");

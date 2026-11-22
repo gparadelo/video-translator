@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cutsAsSaved, norm, scriptFromWords, splitBeats } from "../lib/prepare/analyze";
 import { ANALYZE } from "../lib/prepare/config";
 import { SequenceMatcher, stringRatio } from "../lib/prepare/difflib";
-import { MEDIA_FORMAT, type Media } from "../lib/prepare/media";
+import { MEDIA_FORMAT, parseMedia, type Media } from "../lib/prepare/media";
 import { NAMES_SCHEMA, NAMES_SYSTEM, namesPrompt } from "../lib/prepare/names";
 import { alignStep, analysisKey, mediaStep, namesStep, prepKey, transcribeStep, type Aligned, type Links, type PrepJob, type Prepared } from "../lib/prepare/steps";
 import { STT_MODEL } from "../lib/produce/config";
@@ -228,6 +228,10 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     const done = await mediaStep(k, { ...links, size: async (key) => old.files.get(key)?.length ?? null }, { phase: "done", audio: "audio.wav", audio_bytes: 10 });
     expect(done).toEqual({ ready: true, dur: vtAnalysis.video.dur, cuts: vtAnalysis.anchors.length });
     expect(json(old, prepKey(k, "media.json")).cuts).toEqual(cutsAsSaved(vtAnalysis.anchors.map((a: { t: number }) => a.t)));
+    // ...whose cuts, rounded as cuts.txt has them, may sit on 0.050 itself (the third frame at 59.94 fps)
+    expect(parseMedia({ ...media, cuts: cutsAsSaved([3 / 59.94, 8.95]) }).cuts).toEqual([0.05, 8.95]);
+    expect(() => parseMedia({ ...media, cuts: [0, 2] })).toThrow(/outside/);
+    expect(() => parseMedia({ ...media, cuts: [2, 9] })).toThrow(/outside/);
     // the video gone from storage (30 days)
     await expect(mediaStep(job(memoryStore()), { ...links, size: async () => null }, { phase: "start" })).rejects.toThrow(/no longer in storage/);
   });
