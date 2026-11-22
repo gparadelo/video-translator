@@ -1,4 +1,6 @@
-// Runs in a real browser (test/e2e/run.mjs) with the same code the job page uses: makes the "produced" job's
+// Runs in a real browser (test/e2e/run.mjs) with the same code the job page uses: checks and measures new videos
+// (lib/prepare: the file checks, the cuts, the loudness, the voiceover's sound), prepares an uploaded one through the
+// prepare routes (lib/prepare/run.ts; the test server answers them with lib/prepare/steps.ts), makes the "produced" job's
 // language through the produce routes (lib/produce/run.ts; the test server answers them with lib/produce/steps.ts
 // and the fake Claude and ElevenLabs), builds the fixture jobs' timing plans and voice tracks from their plan
 // inputs (lib/pipeline, the clips decoded by this browser), renders the "flat" and "produced" jobs from what it
@@ -8,6 +10,9 @@ import { BufferTarget, StreamTarget, type Target } from "mediabunny";
 import { buildLanguage } from "../../lib/pipeline/build";
 import { metaFile, parseClipMeta, parseInputs } from "../../lib/pipeline/inputs";
 import { decodeMp3 } from "../../lib/pipeline/run";
+import { checkVideo } from "../../lib/prepare/checks";
+import { measureVideo } from "../../lib/prepare/local";
+import { prepareJob, type PrepareProgress } from "../../lib/prepare/run";
 import { produceLanguage, type ProduceProgress } from "../../lib/produce/run";
 import { checkVoice, parsePlan, sourceSize, type RenderPlan } from "../../lib/render/plan";
 import { previewQuality, qualityOptions, type QualityId } from "../../lib/render/quality";
@@ -37,12 +42,12 @@ async function build(name: string) {
 }
 
 /** The approved "produced" job's language, made as the job page makes it (until it is voiced). */
-async function produce() {
+async function produce(jobId = "job-e2e") {
   const t0 = performance.now();
   const stages: string[] = [];
   let waits = 0;
   await produceLanguage({
-    jobId: "job-e2e", runner: "e2e-browser", lang: "de", generation: 1,
+    jobId, runner: "e2e-browser", lang: "de", generation: 1,
     onProgress: (p: ProduceProgress) => void (stages.at(-1) !== p.stage && stages.push(p.stage)),
     onWaiting: (w) => void (w && waits++),
   });
@@ -71,12 +76,12 @@ function fileLikeTarget() {
   return { target, bytes };
 }
 
-async function run(mode: Mode, name = "flat") {
+async function run(mode: Mode, name = "flat", sourcePath = "/files/source.mp4") {
   const missing = missingApis();
   if (missing) throw new Error(`missing ${missing}`);
   if (!(await canEncodeVoice())) throw new Error("no AAC encoder");
   const { plan, voice } = flat(name);
-  const source = await openSource(new URL("/files/source.mp4", location.href).href);
+  const source = await openSource(new URL(sourcePath, location.href).href);
   try {
     const [w, h] = sourceSize(plan, source.width, source.height);
     checkVoice(plan, voice);
@@ -153,5 +158,54 @@ async function runSave(stopAfterMs?: number) {
   }
 }
 
-Object.assign(window, { runProduce: produce, runBuild: build, runE2E: run, runSave });
+const videoBlob = async (name: string) => {
+  const r = await fetch(`/files/videos/${name}.mp4`);
+  if (!r.ok) throw new Error(`no video ${name}`);
+  return r.blob();
+};
+
+/** The file checks of the new-project page, on each test video as a picked file. */
+async function checks(names: string[]) {
+  const out: Record<string, unknown> = {};
+  for (const n of names) {
+    const c = await checkVideo(await videoBlob(n));
+    out[n] = c.ok ? { ok: true, summary: c.summary, notes: c.notes } : { ok: false, reason: c.reason };
+  }
+  return out;
+}
+
+/** What the job page measures of a video (media.json and the voiceover), posted back to the test server. */
+async function measure(name: string) {
+  const t0 = performance.now();
+  const m = await measureVideo(await videoBlob(name), true, () => {});
+  await fetch(`/save/measure-${name}.json`, { method: "POST", body: JSON.stringify({ ...m.media, audio_bytes: m.audio.bytes.length, ms: m.ms }) });
+  await fetch(`/save/measure-${name}-${m.audio.file}`, { method: "POST", body: m.audio.bytes as Uint8Array<ArrayBuffer> });
+  return { ms: performance.now() - t0, audio: m.audio.file, phases: m.ms };
+}
+
+/**
+ * The new-upload job: the video "uploaded" (PUT to the test server's storage), then prepared as the job page does
+ * it: with the picked file (`withFile`), or reading the upload back from storage.
+ */
+async function prepare(o: { jobId: string; userId: string; video: string; status: "preparing" | "aligning"; withFile: boolean; upload: boolean }) {
+  const t0 = performance.now();
+  const blob = await videoBlob(o.video);
+  if (o.upload) {
+    const r = await fetch(`/upload/u/${o.userId}/${o.jobId}/source`, { method: "PUT", body: blob });
+    if (!r.ok) throw new Error(`upload failed (${r.status})`);
+  }
+  const stages: string[] = [];
+  let waits = 0;
+  const status = await prepareJob({
+    jobId: o.jobId, runner: "e2e-browser", status: o.status, file: o.withFile ? blob : null,
+    onProgress: (p: PrepareProgress) => {
+      const name = p.stage === "measuring" ? `measuring ${p.part}` : p.stage;
+      if (stages.at(-1) !== name) stages.push(name);
+    },
+    onWaiting: (w) => void (w && waits++),
+  });
+  return { ms: performance.now() - t0, status, stages, waits };
+}
+
+Object.assign(window, { runProduce: produce, runBuild: build, runE2E: run, runSave, runChecks: checks, runMeasure: measure, runPrepare: prepare });
 document.title = "ready";

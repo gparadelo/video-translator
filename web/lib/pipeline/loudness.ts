@@ -93,6 +93,103 @@ export function integratedLoudness(samples: ArrayLike<number>, sampleRate: numbe
   return integrated;
 }
 
+/**
+ * ebur128's weight of each channel, by channel count, in ffmpeg's channel order: 1.41 for the surround (side and
+ * back) channels, 0 for LFE, 1 for the rest. Only mono and stereo are common in the videos here.
+ */
+export function channelWeights(channels: number): number[] {
+  if (channels === 6) return [1, 1, 1, 0, 1.41, 1.41]; // 5.1: FL FR FC LFE SL SR
+  if (channels === 8) return [1, 1, 1, 0, 1.41, 1.41, 1.41, 1.41]; // 7.1: ... BL BR SL SR
+  return Array.from({ length: channels }, () => 1.0);
+}
+
+/**
+ * integratedLoudness for any number of channels, fed as the audio is decoded (planar, full scale = 1): what
+ * `ffmpeg -i <video> -vn -af ebur128` measures of a video's sound (vt.lufs on the original). Each channel is
+ * K-weighted with its own filters and running 400 ms sum; a block's power is 1e-12 plus the weighted sums, over
+ * the block length, as ffmpeg adds them. With one channel it is integratedLoudness to the bit.
+ */
+export class LoudnessMeter {
+  private f: ReturnType<typeof kWeighting>;
+  private size: number;
+  private step: number;
+  private cache: Float64Array[];
+  private sum: Float64Array;
+  private st: Float64Array; // per channel: y1 y2 z1 z2
+  private counts = new Uint32Array(HIST_SIZE);
+  private pos = 0;
+  private filled = false;
+  private count = 0;
+  private keptPowers = 0;
+  private keptBlocks = 0;
+  private weights: number[];
+  constructor(sampleRate: number, private channels: number) {
+    histEnergy ??= Float64Array.from({ length: HIST_SIZE }, (_, i) => energyOf(i / HIST_GRAIN + ABS_THRES));
+    this.f = kWeighting(sampleRate);
+    this.size = Math.trunc((sampleRate * 4) / 10);
+    this.step = Math.trunc(sampleRate / 10);
+    this.cache = Array.from({ length: channels }, () => new Float64Array(this.size));
+    this.sum = new Float64Array(channels);
+    this.st = new Float64Array(channels * 4);
+    this.weights = channelWeights(channels);
+  }
+
+  /** `planes[c][i]` for i < frames: the next frames of every channel. */
+  push(planes: ArrayLike<number>[], frames: number) {
+    const { preB, preA, rlbB, rlbA } = this.f;
+    const { channels, cache, sum, st, size, weights } = this;
+    for (let i = 0; i < frames; i++) {
+      const bin = this.pos;
+      if (++this.pos === size) {
+        this.filled = true;
+        this.pos = 0;
+      }
+      for (let c = 0; c < channels; c++) {
+        const s = c * 4;
+        const x = planes[c][i];
+        const y = preB[0] * x + st[s];
+        st[s] = preB[1] * x + st[s + 1] - preA[1] * y;
+        st[s + 1] = preB[2] * x - preA[2] * y;
+        const z = rlbB[0] * y + st[s + 2];
+        st[s + 2] = rlbB[1] * y + st[s + 3] - rlbA[1] * z;
+        st[s + 3] = rlbB[2] * y - rlbA[2] * z;
+        const e = z * z;
+        sum[c] = sum[c] + e - cache[c][bin];
+        cache[c][bin] = e;
+      }
+      if (++this.count !== this.step) continue;
+      this.count = 0;
+      let power = 1e-12;
+      if (this.filled) {
+        for (let c = 0; c < channels; c++) power += weights[c] * sum[c];
+        power /= size;
+      }
+      const loud = loudnessOf(power);
+      if (!(loud >= ABS_THRES)) continue;
+      this.counts[histPos(loud)]++;
+      this.keptPowers += power;
+      this.keptBlocks++;
+    }
+  }
+
+  /** The integrated loudness so far (LUFS); -70 when no block passed the absolute gate. */
+  integrated(): number {
+    if (!this.keptBlocks) return ABS_THRES;
+    let rel = this.keptPowers / this.keptBlocks;
+    if (!rel) rel = 1e-12;
+    const gate = histPos(loudnessOf(rel) - 10);
+    let n = 0, s = 0;
+    for (let h = gate; h < HIST_SIZE; h++) {
+      n += this.counts[h];
+      s += this.counts[h] * histEnergy![h];
+    }
+    return n ? loudnessOf(s / n) : ABS_THRES;
+  }
+
+  /** What vt.lufs reads: one decimal. */
+  lufs = () => Number(pyFormat(this.integrated(), 1));
+}
+
 /** What vt.lufs reads from ffmpeg's summary ("I: -18.4 LUFS"): the integrated loudness with one decimal. */
 export const lufsOneDecimal = (samples: ArrayLike<number>, sampleRate: number, scale = 1) =>
   Number(pyFormat(integratedLoudness(samples, sampleRate, undefined, scale), 1));

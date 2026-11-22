@@ -134,19 +134,19 @@ export type ClaudeClient = Pick<Anthropic, "beta">;
 export type ClaudeUsage = { model: string; input_tokens: number; output_tokens: number };
 
 /**
- * vt.claude_json + vt.claude_script: one Claude call whose answer is the beats. Returns them, the assistant
+ * vt.claude_json: one Claude call whose answer is JSON matching `schema`. Returns the parsed answer, the assistant
  * message to append when asking again, and the usage. Errors come back as ProduceError: retry for the passing
  * ones (busy, overloaded, connection), a plain message for the rest.
  */
-export async function claudeScript(client: ClaudeClient, messages: Message[]): Promise<{ beats: ClaudeBeat[]; reply: Message; usage: ClaudeUsage }> {
+export async function claudeJson(client: ClaudeClient, system: string, schema: object, messages: Message[]): Promise<{ data: unknown; reply: Message; usage: ClaudeUsage }> {
   let r;
   try {
     r = await client.beta.messages.create({
       model: CLAUDE.model,
       max_tokens: CLAUDE.max_tokens,
-      system: TRANSLATE_SYSTEM,
+      system,
       messages,
-      output_config: { effort: CLAUDE.effort, format: { type: "json_schema", schema: SCRIPT_SCHEMA } },
+      output_config: { effort: CLAUDE.effort, format: { type: "json_schema", schema: schema as Record<string, unknown> } },
       betas: CLAUDE.betas,
       fallbacks: "default",
     });
@@ -162,23 +162,25 @@ export async function claudeScript(client: ClaudeClient, messages: Message[]): P
   }
   const text = r.content.find((b) => b.type === "text")?.text;
   if (text === undefined) throw new ProduceError("Claude's answer had no text - try again", { retry: true });
-  let data: { beats?: unknown };
+  let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
     throw new ProduceError("Claude's answer wasn't readable - try again", { retry: true });
   }
-  const beats = data?.beats;
+  const u = r.usage;
+  return { data, reply: { role: "assistant", content: text }, usage: { model: r.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens } };
+}
+
+/** vt.claude_script: a translation call. Returns the beats, the assistant message to append, and the usage. */
+export async function claudeScript(client: ClaudeClient, messages: Message[]): Promise<{ beats: ClaudeBeat[]; reply: Message; usage: ClaudeUsage }> {
+  const { data, reply, usage } = await claudeJson(client, TRANSLATE_SYSTEM, SCRIPT_SCHEMA, messages);
+  const beats = (data as { beats?: unknown } | null)?.beats;
   if (!Array.isArray(beats) || !beats.every((b) => b && Number.isInteger(b.id) && typeof b.text === "string" &&
       (b.speed === null || b.speed === undefined || (typeof b.speed === "number" && Number.isFinite(b.speed))))) {
     throw new ProduceError("Claude's answer wasn't in the expected form - try again", { retry: true });
   }
-  const u = r.usage;
-  return {
-    beats: beats.map((b) => ({ id: b.id, text: b.text, speed: b.speed ?? null })),
-    reply: { role: "assistant", content: text },
-    usage: { model: r.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens },
-  };
+  return { beats: beats.map((b) => ({ id: b.id, text: b.text, speed: b.speed ?? null })), reply, usage };
 }
 
 /** A Claude API error as the person should see it (vt.claude_json's messages, and which ones pass by themselves). */

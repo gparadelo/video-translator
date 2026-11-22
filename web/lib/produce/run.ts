@@ -113,10 +113,21 @@ function online(signal?: AbortSignal): Promise<void> {
 type Answer = { error?: string; retry?: boolean; after?: number; code?: ErrorCode };
 
 /** POST one step, tried again on passing problems. Throws ProduceError (or RunGone, or the abort). */
-async function step<T>(o: ProduceOptions, name: string, body: Record<string, unknown>): Promise<T> {
+function step<T>(o: ProduceOptions, name: string, body: Record<string, unknown>): Promise<T> {
+  return callStep<T>(o, `/api/jobs/${o.jobId}/produce/${o.lang}/${name}`, { generation: o.generation, runner: o.runner, ...body });
+}
+
+/** What callStep needs: how to report a wait, how to stop, and (for tests) fetch and sleep. */
+export type StepOptions = Pick<ProduceOptions, "onWaiting" | "signal" | "fetchFn" | "sleep">;
+
+/**
+ * POST a step of ours (produce or prepare routes) with a JSON body, tried again on passing problems with growing
+ * pauses (and, while offline, waiting for the connection without using up the tries). Throws ProduceError, RunGone
+ * ("gone"), RunTaken ("taken"), or the abort.
+ */
+export async function callStep<T>(o: StepOptions, url: string, body: Record<string, unknown>): Promise<T> {
   const fetchFn = o.fetchFn ?? fetch;
   const sleep = o.sleep ?? defaultSleep;
-  const url = `/api/jobs/${o.jobId}/produce/${o.lang}/${name}`;
   for (let attempt = 1; ; attempt++) {
     o.signal?.throwIfAborted();
     let status = 0;
@@ -125,7 +136,7 @@ async function step<T>(o: ProduceOptions, name: string, body: Record<string, unk
       const r = await fetchFn(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generation: o.generation, runner: o.runner, ...body }),
+        body: JSON.stringify(body),
         signal: o.signal,
       });
       status = r.status;

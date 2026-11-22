@@ -6,6 +6,7 @@ import { langName, type Job, type Output } from "@/lib/jobs";
 import { useRenderGuard } from "@/lib/render/guard";
 import { RunGone, RunTaken, produceLanguage, type ProduceProgress, type Waiting } from "@/lib/produce/run";
 import { createClient } from "@/lib/supabase/client";
+import { runnerId } from "@/lib/runner";
 
 // A language being made on this page (lib/produce/run.ts): translated, voiced beat by beat and fitted, with the
 // person's own keys, until it is voiced; the card then becomes the voiced card (VoicedOutput) and the render card.
@@ -24,20 +25,6 @@ const HOLD_EVERY = 20_000;
 /** How often a browser that doesn't hold the run looks again. */
 const LOOK_AGAIN = 15_000;
 
-/** This browser's id for hold_run: the same in every tab and after a reload, so reopening the page carries on. */
-let memoRunner: string | undefined;
-function runnerId() {
-  try {
-    let id = localStorage.getItem("vt-runner");
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem("vt-runner", id);
-    }
-    return id;
-  } catch {
-    return (memoRunner ??= crypto.randomUUID());
-  }
-}
 
 function stepText(p: ProduceProgress | null) {
   if (!p) return "Starting…";

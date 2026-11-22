@@ -12,7 +12,10 @@ export const CLAUDE = {
   betas: ["server-side-fallback-2026-07-01"],
 };
 
-/** config.default.toml [elevenlabs] (without stt_model: transcription is the worker's until phase 4). */
+/** config.default.toml [elevenlabs] stt_model: the speech-to-text model that transcribes the voiceover (lib/prepare). */
+export const STT_MODEL = "scribe_v2";
+
+/** config.default.toml [elevenlabs], the voice's settings (stt_model is STT_MODEL). */
 export const ELEVENLABS = {
   model_id: "eleven_multilingual_v2",
   /** the clips' format: lib/pipeline (mp3.ts, the plan inputs) relies on it */

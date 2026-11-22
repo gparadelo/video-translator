@@ -29,10 +29,20 @@ the browser. A project's title is translated with the person's own Claude key
 (`app/api/jobs/[id]/title/route.ts`, `lib/translate-title.ts`) into the project's languages as plain
 ASCII titles of at most 60 characters. A project has a video, a title, or both.
 
+## Preparing a video
+
+A video is checked as soon as it's picked (`lib/prepare/checks.ts`: can this browser decode it; HDR, no sound,
+too long and the like are refused with what to do). The project's page uploads it and, at the same time, measures
+it in the browser (`lib/prepare/local.ts`): its length and frame rate as ffprobe reports them, the cuts (a port of
+ffmpeg's `scale=270:-2,select=gt(scene,0.2)` scene score, `lib/prepare/scenes.ts`, run in Web Workers), the
+loudness, and the voiceover's sound. Then short routes on the person's own keys
+(`app/api/jobs/[id]/prepare/{media,transcribe,names,align}`, `lib/prepare/steps.ts`) transcribe it (ElevenLabs),
+check the spelling of names (Claude), time every word (ElevenLabs forced alignment) and write `analysis.json`, a
+port of `scripts/vt.py`'s prepare (`test/prepare-parity.test.ts`, `test/scenes.test.ts`). No worker is involved.
+
 ## Translating and voicing
 
-The worker on the Mac only transcribes and times the original voiceover (`analysis.json`). After the person
-approves the transcript, the job page makes each language (`components/ProduceOutput.tsx`,
+After the person approves the transcript, the job page makes each language (`components/ProduceOutput.tsx`,
 `lib/produce/run.ts`) through short routes that run on the person's own keys
 (`app/api/jobs/[id]/produce/[lang]/{translate,tts,fit}`, `lib/produce/steps.ts`): Claude translates and rewrites
 the beats that don't fit, ElevenLabs voices one beat per call, every step is saved in R2, and a closed tab
@@ -54,7 +64,8 @@ Chrome and Edge work best; other browsers are told so. Files and formats: "Files
 
 ```bash
 pnpm test   # unit tests + checks against ffmpeg and vt.py, with fake Claude/ElevenLabs (needs ffmpeg and uv)
-pnpm e2e    # in headless Chrome: produces, builds and renders fake jobs and compares them with vt.py and the CLI
+pnpm e2e    # in headless Chrome: checks, measures and prepares test videos, produces, builds and renders them,
+            # and compares everything with vt.py and the CLI
 ```
 
 ## Learn More
