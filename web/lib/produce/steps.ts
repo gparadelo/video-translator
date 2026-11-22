@@ -95,7 +95,7 @@ export const analysisId = (A: Analysis) =>
 export async function loadAnalysis(r: Run): Promise<Analysis> {
   const json = await readJson(r, r.analysisKey, 5_000_000, "analysis of the video");
   if (json === null) {
-    throw new ProduceError("the analysis of the video is missing (files are kept for 30 days): approve the transcript again");
+    throw new ProduceError("the analysis of the video is no longer stored (files are kept for 30 days). Upload the video again as a new project");
   }
   return parseAnalysis(json);
 }

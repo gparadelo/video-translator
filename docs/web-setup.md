@@ -101,7 +101,12 @@ rounds). Then the language is `voiced`, and the page builds its voice track and 
 - **The tab has to stay open** while a language is made (a few minutes): the page keeps the screen awake and asks
   before closing. If it's closed anyway, nothing is lost: every step is saved in R2, and the next time the page
   is opened it carries on from the first missing piece. Beats already voiced, and the translation, are reused,
-  so nothing is paid twice. One tab of a browser works on a language at a time (another tab says so).
+  so nothing is paid twice.
+- **One browser makes a language at a time.** The page holds the run in the database (`hold_run`, renewed every
+  20 s, `job_outputs.runner`), and the produce routes answer only that browser, so opening the project on a
+  second device doesn't pay twice: it says "Being made on another device or browser" and takes over about a
+  minute after the first one stops (closed, asleep). Inside one browser, one tab at a time (Web Locks).
+- Offline (wifi gone, laptop asleep), the page waits for the connection without using up its tries.
 - ElevenLabs or Claude being busy, a dropped connection or a function that ran out of time are tried again with
   growing pauses (the page says "Trying again in 10 s"). A problem the person has to fix (a key without the
   Text to Speech permission, a rejected key, no credits left, a voice that isn't in the account) stops the
@@ -114,7 +119,13 @@ rounds). Then the language is `voiced`, and the page builds its voice track and 
 - At most 2 beats are voiced at a time (ElevenLabs' cheaper plans allow 2-3 requests at once) and 2 Claude calls,
   over all languages in the tab.
 - What each call cost is recorded in `usage_events` (as the worker did): `claude` (tokens), `elevenlabs_tts`
-  (characters).
+  (characters). The route writes it with the person's own session (`log_usage`): it's informational, since
+  everyone pays with their own keys. `log_usage` only takes the person's own projects, these two services, and
+  whole amounts below 10 million (plus the model's name).
+- A function that runs out of time after Claude or ElevenLabs answered but before the answer was saved (rare:
+  translate allows 300 s, tts 60 s) is tried again, and that call is paid twice.
+- The analysis, like every file, is deleted from R2 after 30 days: after that a project can't get new
+  languages; upload the video again as a new project.
 
 ## Upgrading an existing setup to per-person keys
 Do it in this order. Vercel only applies new settings to new deployments, and a new worker against an old
@@ -160,7 +171,10 @@ would translate approved projects without the analysis the web app needs). Proje
 old worker to translate them (approved, or stopped half way) go to the new worker first, which times their
 transcript and uploads `analysis.json`; then the job page translates them (languages already voiced keep their
 voice). Projects that were already done keep everything; translating them into more languages also goes through
-the worker once, for the same reason. Nothing changes in R2's CORS policy, and no new setting is needed.
+the worker once, for the same reason (phase 4, analysis in the browser, has to remove this: it must be able to
+make `analysis.json` for such a project without the worker). A version 3 worker that was still preparing a
+project when the database was upgraded leaves it without `analysis_key`; approving it then goes through the new
+worker too. Nothing changes in R2's CORS policy, and no new setting is needed.
 
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.

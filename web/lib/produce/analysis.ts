@@ -32,7 +32,7 @@ const ANCHOR_KINDS = ["lead", "tail", "in", "gap"];
 export function parseAnalysis(json: unknown): Analysis {
   const a = json as Partial<Analysis> | null;
   const bad = (what: string) =>
-    new ProduceError(`the analysis of the video can't be used (${what}): approve the transcript again`, { status: 422 });
+    new ProduceError(`the analysis of the video can't be used (${what}). Upload the video again as a new project`, { status: 422 });
   if (!a || typeof a !== "object") throw bad("unreadable");
   if (a.format !== ANALYSIS_FORMAT) throw bad(`format ${a.format ?? "none"}, expected ${ANALYSIS_FORMAT}`);
   if (typeof a.base_lang !== "string" || !a.base_lang) throw bad("no language");

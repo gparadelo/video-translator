@@ -330,7 +330,8 @@ function Outputs({ job, outputs, refresh, act }: { job: Job; outputs: Output[]; 
             </div>
           )}
           {o.status === "failed" && <p className="text-sm text-red-700 dark:text-red-300">{o.flags[0]}</p>}
-          {o.status === "failed" && ["producing", "done", "failed"].includes(job.status) && (
+          {/* while producing, only the languages being made now can start again (start_run) */}
+          {o.status === "failed" && (job.status === "producing" ? job.languages.includes(o.lang) : ["done", "failed"].includes(job.status)) && (
             <Button
               kind="plain"
               className="self-start"
