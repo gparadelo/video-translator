@@ -79,7 +79,7 @@ def make_case(d: Path, rnd: random.Random, kind: str, video: tuple[float, float]
     tts.mkdir(parents=True, exist_ok=True)
 
     # the original: beats of words with times
-    nbeats = rnd.randint(2, 6) if not video else 3
+    nbeats = 3 if video else 1 if kind == "one_beat" else rnd.randint(2, 6)
     t = rnd.uniform(0.2, 1.2)
     tokens, beats = [], []
     for bi in range(nbeats):
@@ -107,7 +107,7 @@ def make_case(d: Path, rnd: random.Random, kind: str, video: tuple[float, float]
     cuts = sorted({round(rnd.uniform(0.1, vid_dur - 0.1) * fps) / fps for _ in range(ncuts)})
     if kind == "lead_tail":
         cuts = sorted(set(cuts) | {round(s0 * 0.5 * fps) / fps, round((s1 + 0.2) * fps) / fps})
-    cuts = [c for c in cuts if 0.05 < c < vid_dur - 0.05]
+    cuts = [c for c in cuts if 0.05 < c < vid_dur - 0.05] if kind != "no_cuts" else []  # no_cuts: one clip
     anchors = anchor_cuts(tokens, cuts)
     A = {"base_lang": "en", "video": {"path": str(d / "source.mp4"), "dur": vid_dur, "fps": fps, "w": 1080, "h": 1920},
          "speech_start": s0, "speech_end": s1, "beats": beats, "tokens": tokens, "anchors": anchors,
@@ -231,7 +231,8 @@ def make_e2e(d: Path, rate: str, size: tuple[int, int]) -> dict:
     return out
 
 
-KINDS = ("plain", "long", "short", "dropped", "reordered", "lead_tail", "misaligned", "tight", "loose")
+KINDS = ("plain", "long", "short", "dropped", "reordered", "lead_tail", "misaligned", "tight", "loose", "one_beat",
+         "no_cuts")
 
 
 def lufs3(path: str) -> float | None:

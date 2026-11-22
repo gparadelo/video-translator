@@ -174,6 +174,9 @@ Each `tts/<clip>.json` is what `vt.tts_beat` keeps: `text` (what was voiced, mar
 `alignment` from ElevenLabs' `with-timestamps` endpoint (`characters`, `character_start_times_seconds`,
 `character_end_times_seconds`; `normalized_alignment` is kept but unused). A clip's length is its decoded
 samples (MP3 encoder delay and padding removed, as ffmpeg does) in whole microseconds, as ffprobe reports it.
+The browser reads the delay and padding from the clip's LAME header itself
+([web/lib/pipeline/mp3.ts](../web/lib/pipeline/mp3.ts)), so a decoder that doesn't cut them gives the same
+samples as Chrome's and ffmpeg's.
 
 `plan.json` is `scripts/vt.py`'s plan (`build_plan`) as `vt.portable_plan` writes it, with `"format": 1`
 ([web/lib/render/plan.ts](../web/lib/render/plan.ts) refuses other formats). The browser uses `fps` (the
@@ -204,9 +207,10 @@ integers (frames, ids) exactly, floats to the last bit or so, flags and report w
 - a beat with another tempo: stretched with WSOLA ([web/lib/pipeline/wsola.ts](../web/lib/pipeline/wsola.ts))
   instead of ffmpeg's atempo, so not sample for sample: the same length to the sample (`round(length / tempo)`;
   atempo loses up to ~15 ms at the end), words within 3 ms of where the tempo puts them (atempo moves onsets
-  ~20 ms early), the same level within 0.5 dB, and as clean a tone as atempo's. Because the stretched audio
-  differs a little, the loudness measured before the gain can round to the other 0.1 LU: then the whole track is
-  0.1 dB louder or quieter than `vt.py`'s.
+  ~20 ms early), the same level within 0.5 dB, and as clean a tone as atempo's. atempo keeps about 0.1-0.2 dB
+  more energy in a stretched beat than WSOLA, so the loudness measured before the gain can round to another
+  0.1 LU step: then the whole track is 0.1 dB (with most of it stretched, up to 0.2 dB) louder or quieter than
+  `vt.py`'s.
 - the limiter (`alimiter=limit=0.95` in `vt.py`, [web/lib/pipeline/limiter.ts](../web/lib/pipeline/limiter.ts)
   here): the same 219-sample delay, untouched audio identical; where it acts, within 0.3% (relative error) of
   alimiter's output, never above the limit.
@@ -215,9 +219,10 @@ integers (frames, ids) exactly, floats to the last bit or so, flags and report w
 
 ## Tests
 In `web/`: `pnpm test` runs the unit tests, including a check of the browser's frame selection against ffmpeg
-running `vt.segment_cmd`, the timing plan and voice track against `vt.py` on 27 synthetic jobs
-(`test/pipeline-parity.test.ts`, made by `test/pipeline_fixture.py`), and the loudness meter, time stretch and
-limiter against ffmpeg (`test/voice-dsp.test.ts`); these need ffmpeg and uv and are skipped without them.
+running `vt.segment_cmd`, the timing plan and voice track against `vt.py` on 33 synthetic jobs, one-beat
+scripts and videos without cuts among them (`test/pipeline-parity.test.ts`, made by `test/pipeline_fixture.py`),
+the loudness meter, time stretch and limiter against ffmpeg (`test/voice-dsp.test.ts`), and the MP3 delay and
+padding cut against ffmpeg's (`test/mp3.test.ts`); these need ffmpeg (and uv) and are skipped without them.
 `pnpm e2e` builds two fake jobs' plans and voice tracks from their plan inputs in headless Google Chrome,
 compares them with `vt.py`'s, renders one and compares every frame and the voice with the CLI render
 (`--size 2160x3840` for 4K, `--rate 30000/1001`). No test calls ElevenLabs or Claude.

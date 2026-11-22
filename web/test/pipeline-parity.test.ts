@@ -62,7 +62,7 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
   let cases: Case[] = [];
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "vt-pipeline-"));
-    cases = JSON.parse(py("cases", dir, "--count", "27", "--seed", "7"));
+    cases = JSON.parse(py("cases", dir, "--count", "33", "--seed", "7"));
   }, 600_000);
   afterAll(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -77,6 +77,8 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
     expect(plans.some((p) => p.beats.some((b: { tempo: number }) => b.tempo < 1))).toBe(true);
     expect(plans.some((p) => p.segments.some((s: { speed: number }) => Math.abs(s.speed - 1.1) < 1e-12))).toBe(true);
     expect(plans.some((p) => p.segments.some((s: { speed: number }) => Math.abs(s.speed - 0.9) < 1e-12))).toBe(true);
+    expect(plans.some((p) => p.beats.length === 1)).toBe(true); // a one-beat script
+    expect(plans.some((p) => p.segments.length === 1 && p.anchors.length === 0)).toBe(true); // no cuts: one clip
   });
 
   it("builds the same plan.json, flags and report", () => {
@@ -117,8 +119,9 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
         return [at - 2048, at + Math.round(b.dur * 44100) + 2048];
       });
       const inStretch = (k: number) => stretchedSpans.some(([a, z]) => k >= a && k < z);
-      // With a stretched beat the loudness measured before the gain differs a little, and once in a while it
-      // rounds (to 0.1 LU, as vt.lufs reads it) the other way: then the whole track is 0.1 dB louder or quieter.
+      // With a stretched beat the loudness measured before the gain differs a little (atempo keeps ~0.1-0.2 dB
+      // more energy than a plain change of length; WSOLA doesn't), and after rounding to 0.1 LU, as vt.lufs reads
+      // it, the whole track can be 0.1 dB, or with most of it stretched 0.2 dB, louder or quieter.
       let xy = 0, yy = 0;
       for (let k = 0; k < want.frames; k++) {
         if (inStretch(k)) continue;
@@ -126,7 +129,7 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
         yy += want.data[2 * k] ** 2;
       }
       const ratio = yy ? xy / yy : 1;
-      const step = stretchedSpans.length ? [1, 10 ** (0.1 / 20), 10 ** (-0.1 / 20)] : [1];
+      const step = stretchedSpans.length ? [0, 0.1, -0.1, 0.2, -0.2].map((dB) => 10 ** (dB / 20)) : [1];
       const scale = step.reduce((a, b) => (Math.abs(b - ratio) < Math.abs(a - ratio) ? b : a));
       expect(Math.abs(ratio - scale), `${c.name}: gain ratio ${ratio}`).toBeLessThan(2e-4);
       let maxDiff = 0, err = 0, ref = 0;
@@ -147,7 +150,7 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
         return 10 * Math.log10(eg / ew);
       });
       rows.push(`${c.name} ${c.kind}: unstretched max diff ${maxDiff}, rel error ${rel.toExponential(2)}` +
-        (scale !== 1 ? ` (gain ${scale > 1 ? "+" : "-"}0.1 dB: the loudness rounded the other way)` : "") +
+        (scale !== 1 ? ` (gain ${(20 * Math.log10(scale)).toFixed(1)} dB: the loudness rounded the other way)` : "") +
         (levels.length ? `; stretched beats level ${levels.map((l) => l.toFixed(2)).join(", ")} dB` : ""));
       expect(maxDiff, `${c.name}: ${rows.at(-1)}`).toBeLessThanOrEqual(2); // the MP3 decoders differ in the last bit
       expect(rel).toBeLessThan(1e-4);
