@@ -3,7 +3,7 @@
 // vt.video_size), the frame rate and length as ffprobe reports them (timing.ts), the colours, and every frame's
 // timestamp. Reads only the file's index (no decoding).
 
-import { EncodedPacketSink, type Input, type InputVideoTrack } from "mediabunny";
+import { ALL_FORMATS, BlobSource, EncodedPacketSink, Input, UrlSource, type InputVideoTrack } from "mediabunny";
 import { fileStart } from "../render/render";
 import { probeDuration, rFrameRate, variableFrameRate } from "./timing";
 
@@ -35,6 +35,11 @@ export type VideoFacts = {
   /** where the file starts (ffmpeg counts times from here) */
   start: number;
 };
+
+/** The video to read: a File, or a link to it in storage (read with range requests). */
+export function openInput(source: Blob | string): Input {
+  return new Input({ source: typeof source === "string" ? new UrlSource(source, { maxCacheSize: 64 * 2 ** 20 }) : new BlobSource(source), formats: ALL_FORMATS });
+}
 
 /** Every frame's presentation time in ticks, from the file's index. */
 async function frameTicks(track: InputVideoTrack, timescale: number): Promise<number[]> {

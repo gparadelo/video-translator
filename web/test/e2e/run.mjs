@@ -415,6 +415,9 @@ try {
   for (const [n, c] of Object.entries(checks)) console.log(`  ${n}: ${c.ok ? `ok, ${c.summary}${c.notes.length ? ` (${c.notes.join(" ")})` : ""}` : c.reason}`);
   report(Object.fromEntries(CHECKED.map((n) => [`checks: ${n} ${refused[n] ? "refused, saying why" : "accepted"}`,
     refused[n] ? !checks[n].ok && refused[n].test(checks[n].reason) : checks[n].ok])));
+  // a video that reached storage without the checks (a project from an older version) is refused when it's measured
+  const measuredHdr = await page.evaluate((x) => window.runMeasure(x).then(() => "measured", (e) => e.message), "hlg");
+  report({ "measuring an HDR video refuses it, saying why": refused.hlg.test(measuredHdr) });
   for (const n of MEASURED) {
     const r = await page.evaluate((x) => window.runMeasure(x), n);
     const ours = JSON.parse(readFileSync(join(dir, `measure-${n}.json`), "utf8"));

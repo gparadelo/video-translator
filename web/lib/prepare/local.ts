@@ -13,24 +13,22 @@
 // Browser only (WebCodecs, Workers). Load it with import().
 
 import {
-  ALL_FORMATS,
   AudioSample,
   AudioSampleSink,
   AudioSampleSource,
-  BlobSource,
   BufferTarget,
   canEncodeAudio,
-  Input,
   Mp4OutputFormat,
   Output,
-  UrlSource,
   VideoSampleSink,
+  type Input,
   type VideoSample,
 } from "mediabunny";
 import { LoudnessMeter } from "../pipeline/loudness";
 import { ANALYZE } from "./config";
-import { AUDIO_FILES, MEDIA_FORMAT, type AudioFile, type Media } from "./media";
-import { readFacts, type VideoFacts } from "./probe";
+import { MEDIA_FORMAT, type AudioFile, type Media } from "./media";
+import { checkInput } from "./checks";
+import { openInput, type VideoFacts } from "./probe";
 import type { SceneFrame, SceneInit, ScenePicture } from "./scene-worker";
 import { cutsFromScores, SceneScorer, sceneSize } from "./scenes";
 
@@ -49,10 +47,6 @@ const AUDIO_BITRATE = 128_000;
 
 function aborted(signal?: AbortSignal) {
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("stopped", "AbortError");
-}
-
-export function openInput(source: Blob | string): Input {
-  return new Input({ source: typeof source === "string" ? new UrlSource(source, { maxCacheSize: 64 * 2 ** 20 }) : new BlobSource(source), formats: ALL_FORMATS });
 }
 
 // ------------------------------------------------------------------ the sound
@@ -294,8 +288,12 @@ export async function measureVideo(source: Blob | string, measure: boolean, onPr
                                    signal?: AbortSignal): Promise<Measured> {
   const input = openInput(source);
   try {
-    const facts = await readFacts(input);
-    if (!facts.video) throw new Error("the video has no picture");
+    // the same checks as when a video is picked, so a video that reached storage another way (a project from an
+    // older version of the app) is refused with the same reason instead of coming out wrong
+    const check = await checkInput(input);
+    if (!check.ok) throw new Error(check.reason);
+    const { facts } = check;
+    const video = facts.video!;
     const t0 = performance.now();
     onProgress({ stage: "sound", fraction: 0 });
     const sound = await measureSound(input, facts, (fraction) => onProgress({ stage: "sound", fraction }), signal);
@@ -305,9 +303,9 @@ export async function measureVideo(source: Blob | string, measure: boolean, onPr
       onProgress({ stage: "cuts", fraction: 0 });
       const cuts = await measureCuts(input, facts, (fraction) => onProgress({ stage: "cuts", fraction }), signal);
       media = {
-        format: MEDIA_FORMAT, dur: facts.duration, fps: facts.video.fps, width: facts.video.width, height: facts.video.height,
-        base_lufs: sound.lufs, cuts, audio: sound.audio.file, from: "browser", frames: facts.video.ticks.length,
-        variable_fps: facts.video.variable,
+        format: MEDIA_FORMAT, dur: facts.duration, fps: video.fps, width: video.width, height: video.height,
+        base_lufs: sound.lufs, cuts, audio: sound.audio.file, from: "browser", frames: video.ticks.length,
+        variable_fps: video.variable,
       };
     }
     return { media, audio: sound.audio, facts, ms: { sound: t1 - t0, cuts: performance.now() - t1 } };
@@ -315,5 +313,3 @@ export async function measureVideo(source: Blob | string, measure: boolean, onPr
     input.dispose();
   }
 }
-
-export { AUDIO_FILES };

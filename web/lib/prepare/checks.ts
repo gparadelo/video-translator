@@ -3,10 +3,9 @@
 // whether this browser decodes its picture and sound. Either the video is accepted (with notes for the person
 // where something is unusual but fine), or refused with a plain reason and what to do instead. Browser only.
 
-import { canEncodeAudio, type Input } from "mediabunny";
+import type { Input } from "mediabunny";
 import { LIMITS } from "./config";
-import { openInput } from "./local";
-import { readFacts, type VideoFacts } from "./probe";
+import { openInput, readFacts, type VideoFacts } from "./probe";
 
 export const UNSUPPORTED_BROWSER =
   "This browser can't read videos the way the app needs. Use Chrome or Edge on a computer (Windows or Mac).";
@@ -83,23 +82,24 @@ export function judge(f: VideoFacts, can: { video: boolean; audio: boolean }): C
 export async function checkVideo(source: Blob | string): Promise<Check> {
   const problem = browserProblem();
   if (problem) return { ok: false, reason: problem, facts: null };
-  let input: Input | null = null;
+  const input = openInput(source);
   try {
-    input = openInput(source);
-    let facts: VideoFacts;
-    try {
-      facts = await readFacts(input);
-    } catch {
-      return { ok: false, facts: null, reason: "This file can't be read as a video. Choose an .mp4 or .mov file (the finished video)." };
-    }
-    const v = await input.getPrimaryVideoTrack();
-    const a = await input.getPrimaryAudioTrack();
-    const can = { video: v ? await v.canDecode().catch(() => false) : false, audio: a ? await a.canDecode().catch(() => false) : false };
-    return judge(facts, can);
+    return await checkInput(input);
   } finally {
-    input?.dispose();
+    input.dispose();
   }
 }
 
-/** Whether this browser can encode the voiceover as AAC (else it is sent as WAV, which is bigger but as good). */
-export const canEncodeVoiceover = (sampleRate: number) => canEncodeAudio("aac", { numberOfChannels: 1, sampleRate, bitrate: 128_000 }).catch(() => false);
+/** The checks of an opened video (checkVideo; lib/prepare/local.ts checks again before it measures). */
+export async function checkInput(input: Input): Promise<Check> {
+  let facts: VideoFacts;
+  try {
+    facts = await readFacts(input);
+  } catch {
+    return { ok: false, facts: null, reason: "This file can't be read as a video. Choose an .mp4 or .mov file (the finished video)." };
+  }
+  const v = await input.getPrimaryVideoTrack();
+  const a = await input.getPrimaryAudioTrack();
+  const can = { video: v ? await v.canDecode().catch(() => false) : false, audio: a ? await a.canDecode().catch(() => false) : false };
+  return judge(facts, can);
+}
