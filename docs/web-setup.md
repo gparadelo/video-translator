@@ -77,8 +77,11 @@ Things to know:
 - While a job runs the worker keeps the Mac awake. It can't wake a sleeping Mac: to pick up jobs while you're
   away, set the Mac to stay awake when plugged in (System Settings -> Battery -> Options, or Energy).
 - Job folders live in `~/Library/Application Support/Video Translator Worker` for 7 days, so re-running a
-  language reuses the voice audio. The worker doesn't render: it uploads each language's plan and voice track,
-  and the person's browser makes the video.
+  language reuses the voice audio. The worker stops once a language is voiced: it uploads the recorded voice
+  (the plan inputs, below), and the person's browser builds the timing plan and the voice track and makes the
+  video.
+- Each language keeps the voice it was first voiced with in that project (`jobs.voices`): changing the voice in
+  Settings applies to new projects, and to languages a project hasn't voiced yet.
 - If the worker dies mid-job, the job goes back to the queue after two minutes; after three such tries it
   is marked failed.
 - One language failing doesn't stop the others: it is marked failed with the reason, and the job finishes.
@@ -103,28 +106,74 @@ database fails every job.
 
 Projects made before keep their videos: they still play and download as before.
 
+## Upgrading to building the plan and the voice in the browser
+Do it in this order, one step straight after the other:
+1. Run the migration `supabase/migrations/20261124000000_browser_plan.sql`.
+2. Deploy the web app. Until it's deployed, the old pages can't save previews (`save_preview` now needs the
+   run number): a "Make preview" in that gap fails with a message, and works again after the deploy.
+3. On the Mac: `git pull` and restart the worker. An older worker keeps working against the new database (it
+   uploads `plan.json` and `voice.wav` itself, and the language is `ready` as before), but a new worker needs
+   the new database: started before the migration, every language fails.
+
+Nothing changes in R2's CORS policy. Languages already `ready` keep their files and render as before.
+
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.
 2. `POST /api/jobs/<id>/submit` checks the upload arrived and queues the job.
 3. The worker prepares it (transcript); the person reviews it and approves (`approve_job`).
-4. The worker produces each language up to the timing plan and uploads `plan.json` and `voice.wav` (below);
-   the language is then `ready`.
-5. On the job page the browser renders it ([web/lib/render](../web/lib/render)), with the links from
+4. The worker produces each language up to the recorded voice (translation, TTS, and Claude's rewrites of
+   beats that don't fit, for which it still makes the timing plan with `vt.py`) and uploads the plan inputs
+   (below); the language is then `voiced`.
+5. On the job page the browser builds the timing plan and the voice track from them
+   ([web/lib/pipeline](../web/lib/pipeline)) with the links from `GET /api/jobs/<id>/plan/<lang>`, uploads both
+   (`POST /api/jobs/<id>/plan/<lang>`, which checks them, reads the plan and calls `save_plan`); the language is
+   then `ready`. This starts by itself whenever the page is open and takes a few seconds; if the tab is closed
+   part way, it starts again the next time the page is opened. A failure shows its reason and Try again.
+6. The browser renders it ([web/lib/render](../web/lib/render)), with the links from
    `GET /api/jobs/<id>/render/<lang>`: first a 720p preview, uploaded with `POST /api/jobs/<id>/preview/<lang>`
    so it plays on the page (`GET /api/jobs/<id>/files/<lang>?kind=preview`); then, on Download, the chosen
    quality (Original, 1080p or 720p, never more than the source), saved on the person's computer and never
    uploaded. The render needs the tab to stay open; if it's closed, nothing half-made is kept.
 
 ## Files in storage
-Everything for a job is under `u/<user id>/<job id>/` in R2:
+Everything for a job is under `u/<user id>/<job id>/` in R2. Each run of a language (`job_outputs.generation`,
+one more every time the language is translated again) has its own folder `out/<lang>/g<generation>/`, so files
+of an older run, or a browser tab still busy with one, can never mix with the new run's:
 
 | Key | Written by | What it is |
 |---|---|---|
 | `source` | browser (upload) | the original video |
-| `out/<lang>/plan.json` | worker | how to cut and retime the source for this language |
-| `out/<lang>/voice.wav` | worker | the finished voice track |
-| `out/<lang>/preview.mp4` | browser | the 720p preview (H.264 + AAC) |
+| `out/<lang>/g<n>/tts/<clip>.mp3` | worker (phase 3: the TTS route) | one beat's ElevenLabs voice, as the API returned it (`mp3_44100_128`) |
+| `out/<lang>/g<n>/tts/<clip>.json` | worker (phase 3: the TTS route) | that clip's text and per-character timing |
+| `out/<lang>/g<n>/inputs.json` | worker (phase 3: the TTS route) | the plan inputs: what the plan and the voice track are built from; written last |
+| `out/<lang>/g<n>/plan.json` | browser | how to cut and retime the source for this language |
+| `out/<lang>/g<n>/voice.wav` | browser | the finished voice track |
+| `out/<lang>/g<n>/preview.mp4` | browser | the 720p preview (H.264 + AAC) |
+| `out/<lang>/plan.json`, `voice.wav`, `preview.mp4` | phase 1 workers and pages | the same, from before runs had folders |
 | `out/<lang>.mp4`, `out/<lang>_preview.mp4` | older workers | rendered videos of projects made before browser rendering |
+
+The database row (`job_outputs`) holds the keys; the app and the database build them from the row (`worker_output`,
+`save_plan`, `save_preview`), never from what a browser sends.
+
+### Plan inputs (format 1)
+`inputs.json` is `vt.plan_inputs` ([web/lib/pipeline/inputs.ts](../web/lib/pipeline/inputs.ts) reads it and
+refuses other formats; a change older inputs can't satisfy raises `format` in both):
+- `format` (1), `lang`, `voice_id` (the ElevenLabs voice the clips were made with)
+- `analysis`: the original video and voiceover, from `vt analyze`: `video` (`dur` seconds, `fps` = ffprobe's
+  `r_frame_rate` as a float), `source` (`width`, `height`: the size ffmpeg shows the video at, rotation
+  applied), `speech_start`, `speech_end` (seconds), `base_lufs` (integrated loudness of the original, one
+  decimal as `vt.lufs` reads it), `beats` (`id`, `dur`, `pause_after`), `tokens` (per word of the script: `beat`,
+  its beat's index), `anchors` (every cut: `id`, `t`, `kind` `lead`/`tail`/`in`/`gap`, and `frac`, `off` or
+  `token` as `vt analyze` writes them)
+- `fit`: the fitting limits the plan is built with (`config.default.toml` [fit] unless a config overrode them)
+- `script`: the translation, per beat `id`, `text` (with the `{n}` cut markers) and optional `speed`
+- `clips`: per beat, in beat order, `beat` (its id), `file` (the clip's name in `tts/`, letters, digits, `-`,
+  `_` and `.mp3` only) and `speed` (the TTS speed it was voiced at)
+
+Each `tts/<clip>.json` is what `vt.tts_beat` keeps: `text` (what was voiced, markers removed), `speed`, and
+`alignment` from ElevenLabs' `with-timestamps` endpoint (`characters`, `character_start_times_seconds`,
+`character_end_times_seconds`; `normalized_alignment` is kept but unused). A clip's length is its decoded
+samples (MP3 encoder delay and padding removed, as ffmpeg does) in whole microseconds, as ffprobe reports it.
 
 `plan.json` is `scripts/vt.py`'s plan (`build_plan`) as `vt.portable_plan` writes it, with `"format": 1`
 ([web/lib/render/plan.ts](../web/lib/render/plan.ts) refuses other formats). The browser uses `fps` (the
@@ -137,15 +186,38 @@ renders at that size, like the CLI, and stops with a message if it reads the rot
 (`file`, `sample_rate`, `channels`) describes `voice.wav`, which must match it and be as long as the video.
 `beats`, `anchors` and `flags` are there for information.
 
-`voice.wav` is `vt.build_voice_track`: 16-bit PCM, 44.1 kHz, stereo, loudness matched to the original
-voiceover and limited, exactly `total_frames / fps` long. These are the samples the AAC encoder gets, in the
-browser and in the CLI render alike.
+`voice.wav` is what `vt.build_voice_track` makes: 16-bit PCM, 44.1 kHz, stereo, loudness matched to the
+original voiceover and limited, exactly as long as `vt.py`'s (`total_frames / fps`, cut like `-t` with four
+decimals). These are the samples the AAC encoder gets, in the browser and in the CLI render alike.
 
-The database row for each language (`job_outputs`) has `status` `ready`, `plan_key`, `voice_key`, and once
-the browser made the preview, `preview_key` and `preview_bytes`.
+The database row for each language (`job_outputs`) has `generation`; `status` `voiced` with `inputs_key`, then
+`ready` with `plan_key`, `voice_key`, `seconds`, `flags` and `report`, and once the browser made the preview,
+`preview_key` and `preview_bytes`.
+
+### Voice track parity
+`scripts/vt.py` stays the reference until the Python pipeline is removed. The browser's plan is `vt.py`'s plan:
+integers (frames, ids) exactly, floats to the last bit or so, flags and report word for word. Its voice track:
+- every beat at tempo 1 (the usual case: the plan only changes the tempo where a cut can't be placed): sample for
+  sample, within 2 of 32768 (Chrome's MP3 decoder and ffmpeg's differ in the last bit). The loudness meter is
+  ffmpeg `ebur128`'s integrated loudness to 0.002 LU, rounded to 0.1 LU as `vt.lufs` reads it, so the gain is the
+  same.
+- a beat with another tempo: stretched with WSOLA ([web/lib/pipeline/wsola.ts](../web/lib/pipeline/wsola.ts))
+  instead of ffmpeg's atempo, so not sample for sample: the same length to the sample (`round(length / tempo)`;
+  atempo loses up to ~15 ms at the end), words within 3 ms of where the tempo puts them (atempo moves onsets
+  ~20 ms early), the same level within 0.5 dB, and as clean a tone as atempo's. Because the stretched audio
+  differs a little, the loudness measured before the gain can round to the other 0.1 LU: then the whole track is
+  0.1 dB louder or quieter than `vt.py`'s.
+- the limiter (`alimiter=limit=0.95` in `vt.py`, [web/lib/pipeline/limiter.ts](../web/lib/pipeline/limiter.ts)
+  here): the same 219-sample delay, untouched audio identical; where it acts, within 0.3% (relative error) of
+  alimiter's output, never above the limit.
+- `vt.py` itself changed with this: it decodes each clip whole and trims it at exact samples (an MP3 seek
+  garbled the first ~25 ms of every beat), and leaves a tempo of exactly 1 alone (atempo still re-cut it).
 
 ## Tests
 In `web/`: `pnpm test` runs the unit tests, including a check of the browser's frame selection against ffmpeg
-running `vt.segment_cmd` (needs ffmpeg and uv; skipped without them). `pnpm e2e` renders a fake job in
-headless Google Chrome and compares every frame and the voice with the CLI render (`--size 2160x3840` for 4K,
-`--rate 30000/1001`). No test calls ElevenLabs or Claude.
+running `vt.segment_cmd`, the timing plan and voice track against `vt.py` on 27 synthetic jobs
+(`test/pipeline-parity.test.ts`, made by `test/pipeline_fixture.py`), and the loudness meter, time stretch and
+limiter against ffmpeg (`test/voice-dsp.test.ts`); these need ffmpeg and uv and are skipped without them.
+`pnpm e2e` builds two fake jobs' plans and voice tracks from their plan inputs in headless Google Chrome,
+compares them with `vt.py`'s, renders one and compares every frame and the voice with the CLI render
+(`--size 2160x3840` for 4K, `--rate 30000/1001`). No test calls ElevenLabs or Claude.
