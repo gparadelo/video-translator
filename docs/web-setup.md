@@ -1,8 +1,10 @@
 # Web app setup
 
 The web app has three parts: the site in [web/](../web) (Next.js), a Supabase project (login and database),
-and a Cloudflare R2 bucket (the videos). A worker on a Mac transcribes, translates and voices each video; it
-comes later. The videos themselves are rendered in each person's browser (desktop Chrome or Edge).
+and a Cloudflare R2 bucket (the videos). A worker on a Mac transcribes each video and times every word; it
+comes later. Everything after the person approves the transcript happens in the web app: its routes translate
+and voice each language with the person's own Claude and ElevenLabs keys, and the person's browser (desktop
+Chrome or Edge) drives them, builds the voice track and renders the videos.
 
 ## 1. Supabase
 1. Create a project at supabase.com (the free plan is enough).
@@ -42,9 +44,9 @@ keeps it awake; if the Mac was off for longer, un-pause the project in the Supab
 
 ## 2b. Everyone's own API keys
 Each person enters their own ElevenLabs API key, Claude API key and ElevenLabs voice ID on the app's
-**Settings** page. Their videos are spoken in their voice and billed to their accounts, and title translations
-use their Claude key. Until they have, the app asks them to and won't start a project. You do the same for
-your own account.
+**Settings** page. Their videos are transcribed, translated and spoken in their voice and billed to their
+accounts, and title translations use their Claude key. Until they have, the app asks them to and won't start a
+project (or a translation). You do the same for your own account.
 
 The keys are checked when saved, then encrypted (AES-256-GCM) before they go into the database (table
 `user_secrets`, which people can't read). Settings only ever shows a key's last 4 characters. The encryption
@@ -60,11 +62,15 @@ pnpm install
 pnpm dev                       # http://localhost:3000
 ```
 To put it online: import the repository in Vercel, set Root Directory to `web`, and add the same settings
-as environment variables.
+as environment variables. Keep **Fluid compute** on (Settings -> Functions; it is on for new projects): the
+translation route waits for Claude, which for a long script can take a few minutes, and asks for up to 300
+seconds (`maxDuration`). Without Fluid compute the Hobby plan stops every function after 60 seconds, and a long
+translation would fail with "the server answered 504" after its tries.
 
 ## 4. The worker (on a Mac)
-The worker asks the database for jobs, downloads the video, runs the pipeline and uploads the results.
-It only makes outgoing connections, so nothing on the Mac is exposed to the internet.
+The worker asks the database for jobs, downloads the video, transcribes it and times every word (with
+`scripts/vt.py`), and uploads the result (`analysis.json`, below). It only makes outgoing connections, so
+nothing on the Mac is exposed to the internet. Translating and voicing don't need it: the job page does them.
 
 1. `cp worker/.env.example worker/.env` and fill it in: the Supabase URL and **secret** key, the same R2
    values as the web app, and the same `SECRETS_KEY`. It has no ElevenLabs or Claude keys of its own: each job
@@ -76,17 +82,39 @@ It only makes outgoing connections, so nothing on the Mac is exposed to the inte
 Things to know:
 - While a job runs the worker keeps the Mac awake. It can't wake a sleeping Mac: to pick up jobs while you're
   away, set the Mac to stay awake when plugged in (System Settings -> Battery -> Options, or Energy).
-- Job folders live in `~/Library/Application Support/Video Translator Worker` for 7 days, so re-running a
-  language reuses the voice audio. The worker stops once a language is voiced: it uploads the recorded voice
-  (the plan inputs, below), and the person's browser builds the timing plan and the voice track and makes the
-  video.
-- Each language keeps the voice it had when the worker first started producing it in that project
-  (`jobs.voices`, pinned for all of the project's languages at the start of the run): retries and new
-  translations of it use that voice. Changing the voice in Settings applies to new projects, and to languages
-  added to a project later.
+- Job folders live in `~/Library/Application Support/Video Translator Worker` for 7 days, so timing an edited
+  transcript again is quick.
+- The worker does two things: **prepare** a new video (transcribe, fix the spelling of names with Claude, time
+  every word, tie every cut to a word), and **align** an approved transcript that the person edited (or that a
+  worker older than version 4 prepared): time it again. If the edits made the transcript stop matching the
+  voiceover, the project goes back to the review with the reason; otherwise the job page starts translating.
+- A worker older than version 4 gets no work from the database (it still shows as online). Update it.
 - If the worker dies mid-job, the job goes back to the queue after two minutes; after three such tries it
   is marked failed.
-- One language failing doesn't stop the others: it is marked failed with the reason, and the job finishes.
+
+## 5. Translating and voicing (the job page)
+Once a transcript is approved, the job page makes every language itself, with the person's own keys, through
+short routes of the web app (`app/api/jobs/<id>/produce/<lang>/...`, [web/lib/produce](../web/lib/produce)),
+as `vt.py produce` does: Claude translates (and is asked again when markers got lost), ElevenLabs voices each
+beat, the timing plan is made from the recorded beats, and Claude rewrites the beats that don't fit (up to 3
+rounds). Then the language is `voiced`, and the page builds its voice track and renders it as before.
+- **The tab has to stay open** while a language is made (a few minutes): the page keeps the screen awake and asks
+  before closing. If it's closed anyway, nothing is lost: every step is saved in R2, and the next time the page
+  is opened it carries on from the first missing piece. Beats already voiced, and the translation, are reused,
+  so nothing is paid twice. One tab of a browser works on a language at a time (another tab says so).
+- ElevenLabs or Claude being busy, a dropped connection or a function that ran out of time are tried again with
+  growing pauses (the page says "Trying again in 10 s"). A problem the person has to fix (a key without the
+  Text to Speech permission, a rejected key, no credits left, a voice that isn't in the account) stops the
+  language with the reason; **Try again** starts a new run that reuses everything already made.
+- Each language keeps the voice it had when the project's first run started (`jobs.voices`, pinned for all of
+  the project's languages then): retries and new translations of it use that voice. Changing the voice in
+  Settings applies to new projects, and to languages added to a project later.
+- One language failing doesn't stop the others. The project is done when every language is voiced or failed
+  (failed when all of them failed).
+- At most 2 beats are voiced at a time (ElevenLabs' cheaper plans allow 2-3 requests at once) and 2 Claude calls,
+  over all languages in the tab.
+- What each call cost is recorded in `usage_events` (as the worker did): `claude` (tokens), `elevenlabs_tts`
+  (characters).
 
 ## Upgrading an existing setup to per-person keys
 Do it in this order. Vercel only applies new settings to new deployments, and a new worker against an old
@@ -119,13 +147,32 @@ Do it in this order, one step straight after the other:
 
 Nothing changes in R2's CORS policy. Languages already `ready` keep their files and render as before.
 
+## Upgrading to translating and voicing in the web app
+The worker (version 4) no longer translates; the job page does, through the web app. Do it in this order:
+1. Let the worker finish what it's doing (no project "Transcribing" or "Translating"), then stop it
+   (`worker/install-service.sh remove`, or Ctrl-C).
+2. Run the migration `supabase/migrations/20261125000000_browser_produce.sql`.
+3. Deploy the web app (with Fluid compute on, step 3 above).
+4. On the Mac: `git pull` and start the worker again (`worker/install-service.sh`).
+
+In between nothing breaks: projects wait. A version 3 worker against the new database gets no work at all (it
+would translate approved projects without the analysis the web app needs). Projects that were waiting for the
+old worker to translate them (approved, or stopped half way) go to the new worker first, which times their
+transcript and uploads `analysis.json`; then the job page translates them (languages already voiced keep their
+voice). Projects that were already done keep everything; translating them into more languages also goes through
+the worker once, for the same reason. Nothing changes in R2's CORS policy, and no new setting is needed.
+
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.
 2. `POST /api/jobs/<id>/submit` checks the upload arrived and queues the job.
-3. The worker prepares it (transcript); the person reviews it and approves (`approve_job`).
-4. The worker produces each language up to the recorded voice (translation, TTS, and Claude's rewrites of
-   beats that don't fit, for which it still makes the timing plan with `vt.py`) and uploads the plan inputs
-   (below); the language is then `voiced`.
+3. The worker prepares it (transcript, word timing, `analysis.json`); the person reviews it and approves
+   (`approve_job`), which asks for each language (a `pending` row). An unchanged transcript goes straight to
+   `producing`; an edited one is timed again by the worker first (`approved` -> `aligning` -> `producing`).
+4. The job page makes each language (section 5): `start_run` starts a run (a new generation; it checks the
+   person's keys and voice with `missing_setup` and pins the voices), then the page calls
+   `POST /api/jobs/<id>/produce/<lang>/translate`, `.../tts` (once per beat) and `.../fit` until the fit route has
+   written the plan inputs (below) and marked the language `voiced` (`mark_voiced`). A problem that needs the
+   person ends the run with `fail_run`. When the last language of the project settles, the project is `done`.
 5. On the job page the browser builds the timing plan and the voice track from them
    ([web/lib/pipeline](../web/lib/pipeline)) with the links from `GET /api/jobs/<id>/plan/<lang>`, uploads both
    (`POST /api/jobs/<id>/plan/<lang>`, which checks them, reads the plan and calls `save_plan`); the language is
@@ -145,21 +192,43 @@ of an older run, or a browser tab still busy with one, can never mix with the ne
 | Key | Written by | What it is |
 |---|---|---|
 | `source` | browser (upload) | the original video |
-| `out/<lang>/g<n>/tts/<clip>.mp3` | worker (phase 3: the TTS route) | one beat's ElevenLabs voice, as the API returned it (`mp3_44100_128`) |
-| `out/<lang>/g<n>/tts/<clip>.json` | worker (phase 3: the TTS route) | that clip's text and per-character timing |
-| `out/<lang>/g<n>/inputs.json` | worker (phase 3: the TTS route) | the plan inputs: what the plan and the voice track are built from; written last |
+| `analysis.json` | worker (prepare, align) | the original video and voiceover as analyzed (below); what every language is made from |
+| `work/<lang>/script.json` | produce route (translate) | the translation (below), across runs: a new run starts from it |
+| `work/<lang>/ask.json` | produce route (translate) | while Claude is asked again: the conversation so far; removed when done |
+| `work/<lang>/tts/<clip>.mp3`, `.json` | produce route (tts) | every beat ever voiced for this language: a run copies from here instead of paying again |
+| `out/<lang>/g<n>/tts/<clip>.mp3` | produce route (tts) | one beat's ElevenLabs voice, as the API returned it (`mp3_44100_128`) |
+| `out/<lang>/g<n>/tts/<clip>.json` | produce route (tts) | that clip's text and per-character timing |
+| `out/<lang>/g<n>/inputs.json` | produce route (fit) | the plan inputs: what the plan and the voice track are built from; written last |
 | `out/<lang>/g<n>/plan.json` | browser | how to cut and retime the source for this language |
 | `out/<lang>/g<n>/voice.wav` | browser | the finished voice track |
 | `out/<lang>/g<n>/preview.mp4` | browser | the 720p preview (H.264 + AAC) |
 | `out/<lang>/plan.json`, `voice.wav`, `preview.mp4` | phase 1 workers and pages | the same, from before runs had folders |
 | `out/<lang>.mp4`, `out/<lang>_preview.mp4` | older workers | rendered videos of projects made before browser rendering |
 
-The database row (`job_outputs`) holds the keys; the app and the database build them from the row (`worker_output`,
-`save_plan`, `save_preview`), never from what a browser sends.
+The database rows (`jobs`, `job_outputs`) hold the keys; the app and the database build them from the rows
+(`worker_prepared`, `mark_voiced`, `save_plan`, `save_preview`, [web/lib/produce/keys.ts](../web/lib/produce/keys.ts)),
+never from what a browser sends.
+
+### Analysis (format 1)
+`analysis.json` is `vt.portable_analysis` ([web/lib/produce/analysis.ts](../web/lib/produce/analysis.ts) reads
+it and refuses other formats): `format` (1), `base_lang`, `video`, `source`, `speech_start`, `speech_end`,
+`base_lufs`, `tokens` and `anchors` as in the plan inputs below, `beats` (`id`, `text`, `marked`: the text with a
+`{n}` marker in front of the word each cut lands on, `dur`, `pause_after`) and `warnings`. `jobs.analysis_script`
+is the transcript it was made from: `approve_job` sends a different (edited) transcript to the worker first.
+
+### The translation
+`work/<lang>/script.json` is what `vt.write_lang_script` writes (`lang`, `beats`: `id`, `text` with the markers,
+`speed` only where Claude set one, within 0.7-1.2 and rounded to 2 decimals), plus `format` (1), `base` (which
+analysis it translates: a hash of its marked beats; another one means a new translation), and `generation` and
+`round` (the run it was last used in, and how many times Claude rewrote it in that run). The prompts, the schema,
+the model and the checks are `vt.py`'s (`TRANSLATE_SYSTEM`, `SCRIPT_SCHEMA`, `check_script`, `refit_lang`).
+Each clip's name is `vt.tts_beat`'s cache key (12 hex digits of the SHA-1 of the voice, the format and the
+request body as Python's `json.dumps` writes them), so the same request always gives the same file.
 
 ### Plan inputs (format 1)
-`inputs.json` is `vt.plan_inputs` ([web/lib/pipeline/inputs.ts](../web/lib/pipeline/inputs.ts) reads it and
-refuses other formats; a change older inputs can't satisfy raises `format` in both):
+`inputs.json` is `vt.plan_inputs`, written by the fit route ([web/lib/produce/steps.ts](../web/lib/produce/steps.ts))
+([web/lib/pipeline/inputs.ts](../web/lib/pipeline/inputs.ts) reads it and refuses other formats; a change older
+inputs can't satisfy raises `format` in both):
 - `format` (1), `lang`, `voice_id` (the ElevenLabs voice the clips were made with)
 - `analysis`: the original video and voiceover, from `vt analyze`: `video` (`dur` seconds, `fps` = ffprobe's
   `r_frame_rate` as a float), `source` (`width`, `height`: the size ffmpeg shows the video at, rotation
@@ -178,7 +247,8 @@ Each `tts/<clip>.json` is what `vt.tts_beat` keeps: `text` (what was voiced, mar
 samples (MP3 encoder delay and padding removed, as ffmpeg does) in whole microseconds, as ffprobe reports it.
 The browser reads the delay and padding from the clip's LAME header itself
 ([web/lib/pipeline/mp3.ts](../web/lib/pipeline/mp3.ts)), so a decoder that doesn't cut them gives the same
-samples as Chrome's and ffmpeg's.
+samples as Chrome's and ffmpeg's. The fit route reads the same length from the header without decoding
+(`mp3Samples`); a clip without that header (ElevenLabs' have one) is counted frame by frame instead.
 
 `plan.json` is `scripts/vt.py`'s plan (`build_plan`) as `vt.portable_plan` writes it, with `"format": 1`
 ([web/lib/render/plan.ts](../web/lib/render/plan.ts) refuses other formats). The browser uses `fps` (the
@@ -195,9 +265,10 @@ renders at that size, like the CLI, and stops with a message if it reads the rot
 original voiceover and limited, exactly as long as `vt.py`'s (`total_frames / fps`, cut like `-t` with four
 decimals). These are the samples the AAC encoder gets, in the browser and in the CLI render alike.
 
-The database row for each language (`job_outputs`) has `generation`; `status` `voiced` with `inputs_key`, then
-`ready` with `plan_key`, `voice_key`, `seconds`, `flags` and `report`, and once the browser made the preview,
-`preview_key` and `preview_bytes`.
+The database row for each language (`job_outputs`) has `generation`; `status` `pending` (asked for), `running`
+(a run of the job page), `voiced` with `inputs_key`, then `ready` with `plan_key`, `voice_key`, `seconds`,
+`flags` and `report`, and once the browser made the preview, `preview_key` and `preview_bytes`; or `failed`
+with the reason in `flags`.
 
 ### Voice track parity
 `scripts/vt.py` stays the reference until the Python pipeline is removed. The browser's plan is `vt.py`'s plan:
@@ -225,6 +296,16 @@ running `vt.segment_cmd`, the timing plan and voice track against `vt.py` on 33 
 scripts and videos without cuts among them (`test/pipeline-parity.test.ts`, made by `test/pipeline_fixture.py`),
 the loudness meter, time stretch and limiter against ffmpeg (`test/voice-dsp.test.ts`), and the MP3 delay and
 padding cut against ffmpeg's (`test/mp3.test.ts`); these need ffmpeg (and uv) and are skipped without them.
-`pnpm e2e` builds two fake jobs' plans and voice tracks from their plan inputs in headless Google Chrome,
-compares them with `vt.py`'s, renders one and compares every frame and the voice with the CLI render
-(`--size 2160x3840` for 4K, `--rate 30000/1001`). No test calls ElevenLabs or Claude.
+`test/produce-parity.test.ts` runs `vt.produce` and the produce steps against the same fake Claude and
+ElevenLabs (`test/mocks.mjs`: deterministic, so the same request gets the same answer) and checks they send the
+same requests (every Claude request body in order, the same ElevenLabs bodies) and end with the same translation,
+clip names and bytes, and plan inputs; it covers Claude asking again, rewrite rounds (one language uses all
+three), a translation that never gets its markers right, stopping and carrying on without paying twice, a
+second run that pays nothing, the retries with their pauses, and the message for each key problem; single
+functions (`check_script`, the cache key, Python's `json.dumps`, the prompts) are compared with `vt.py`'s own
+answers. `pnpm e2e` builds two fake jobs' plans and voice tracks from their plan inputs in headless Google
+Chrome, compares them with `vt.py`'s, renders one and compares every frame and the voice with the CLI render
+(`--size 2160x3840` for 4K, `--rate 30000/1001`); then it makes an approved job's language in Chrome with the
+job page's produce code through the produce steps (against the fakes), checks the requests and the plan inputs
+against `vt.produce`'s, builds and renders it and compares it with the CLI render. No test calls ElevenLabs or
+Claude.

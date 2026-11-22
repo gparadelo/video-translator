@@ -7,7 +7,7 @@ import { HEARTBEAT, interruptedRender, saveRunning, type Running } from "@/lib/r
 import { durationText, qualityLabel, type QualityId } from "@/lib/render/quality";
 import type { Choice, Progress } from "@/lib/render/run";
 
-// A language the worker has prepared (plan + voice): the video is rendered here, in the browser.
+// A language that is ready (plan + voice track): the video is rendered here, in the browser.
 // First a 720p preview, which is uploaded so it plays on this page; then, on Download, the full quality,
 // saved on this computer.
 
