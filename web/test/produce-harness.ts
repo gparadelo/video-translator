@@ -2,6 +2,7 @@
 // fetch the job page's code (lib/produce/run.ts) can call, over a storage kept in memory or in a folder.
 // test/produce-parity.test.ts uses it in Node; test/e2e serves it to Chrome from its test server.
 
+import Anthropic from "@anthropic-ai/sdk";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ProduceError } from "../lib/produce/errors";
@@ -96,6 +97,25 @@ export async function handleStep(b: Backend, path: string, body: Record<string, 
     const err = e instanceof ProduceError ? e : new ProduceError(`something went wrong on the server: ${(e as Error).message}`, { status: 500, retry: true });
     return { status: err.status, json: err.toJSON() };
   }
+}
+
+/**
+ * test/e2e's backend: one job of one person, every language at run 1, files in `root`, the fake APIs at the given
+ * addresses (test/mocks.mjs).
+ */
+export function folderBackend(o: { root: string; userId: string; jobId: string; voice: string; claudeUrl: string; elevenUrl: string }) {
+  const store = folderStore(o.root);
+  const voiced: string[] = [];
+  const b: Backend = {
+    run: (lang, generation) => (generation === 1 ? {
+      store, userId: o.userId, jobId: o.jobId, lang, generation, voice: o.voice,
+      analysisKey: `u/${o.userId}/${o.jobId}/analysis.json`,
+    } : null),
+    claude: new Anthropic({ apiKey: "fake-claude-key", baseURL: o.claudeUrl, maxRetries: 0 }),
+    eleven: { apiKey: "fake-eleven-key", api: o.elevenUrl },
+    markVoiced: async (run) => void voiced.push(run.lang),
+  };
+  return { b, store, voiced };
 }
 
 /** A fetch that answers the produce routes from `b` (for lib/produce/run.ts in Node). */

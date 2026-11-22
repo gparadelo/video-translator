@@ -44,12 +44,12 @@ def make_job(d: Path, seed: int, video: Path | None, size: tuple[int, int], dur:
     else:
         (d / "source.mp4").write_bytes(b"")
     (d / "job.toml").write_text('[elevenlabs]\nvoice_id = "voice123456789"\n')
-    nbeats = rnd.randint(3, 5) if video else rnd.randint(2, 6)
+    nbeats = 3 if video else rnd.randint(2, 6)  # a real video is 12 s: the speech has to fit
     t = rnd.uniform(0.2, 0.8)
     tokens, beats = [], []
     for bi in range(nbeats):
         idx0 = len(tokens)
-        for _ in range(rnd.randint(3, 7)):
+        for _ in range(rnd.randint(3, 5) if video else rnd.randint(3, 7)):
             w = rnd.choice(WORDS)
             wd = 0.06 * len(w) + rnd.uniform(0.05, 0.15)
             tokens.append({"beat": bi, "text": w, "cs": 0, "start": round(t, 3), "end": round(t + wd, 3)})
