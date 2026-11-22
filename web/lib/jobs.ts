@@ -1,14 +1,15 @@
 // Shared by the screens (browser side): what a job (a project: a video, a title, or both) looks like, and
 // the words we show for it.
 
+/** jobs.progress: what an older worker last reported (unused since the browser prepares videos itself). */
 export type Progress = { stage?: string; lang?: string; done?: number; total?: number };
 
 export type Job = {
   id: string;
   name: string;
-  // queued/preparing and approved/aligning are the worker's (transcribing, timing an edited transcript);
-  // producing is this app's: the job page makes each language (lib/produce)
-  status: "uploading" | "queued" | "preparing" | "needs_review" | "approved" | "aligning" | "producing" | "done" | "failed" | "canceled";
+  // preparing: the job page measures the video and transcribes it (lib/prepare); aligning: it times an edited
+  // transcript again; producing: it makes each language (lib/produce)
+  status: "uploading" | "preparing" | "needs_review" | "aligning" | "producing" | "done" | "failed" | "canceled";
   languages: string[];
   base_lang: string | null;
   script: string | null;
@@ -45,8 +46,6 @@ export type Output = {
   voice_key: string | null;
 };
 
-export type Worker = { id: string; last_seen: string };
-
 export const LANGS: Record<string, string> = {
   en: "English", es: "Spanish", de: "German", fr: "French", it: "Italian", nl: "Dutch", pt: "Portuguese",
   pl: "Polish", sv: "Swedish", da: "Danish", no: "Norwegian", fi: "Finnish", tr: "Turkish", ja: "Japanese",
@@ -58,45 +57,14 @@ export const langName = (code: string) => LANGS[code] ?? code.toUpperCase();
 
 export const STATUS: Record<Job["status"], { label: string; tone: "idle" | "busy" | "action" | "good" | "bad" }> = {
   uploading: { label: "Upload not finished", tone: "action" },
-  queued: { label: "Waiting to start", tone: "idle" },
-  preparing: { label: "Transcribing", tone: "busy" },
+  preparing: { label: "Preparing", tone: "busy" },
   needs_review: { label: "Ready for your review", tone: "action" },
-  approved: { label: "Waiting to start", tone: "idle" },
-  aligning: { label: "Getting ready", tone: "busy" },
+  aligning: { label: "Timing the transcript", tone: "busy" },
   producing: { label: "Translating", tone: "busy" },
   done: { label: "Ready", tone: "good" },
   failed: { label: "Failed", tone: "bad" },
   canceled: { label: "Canceled", tone: "idle" },
 };
-
-const STAGES: Record<string, string> = {
-  download: "Downloading the video",
-  transcribe: "Transcribing the voiceover",
-  align: "Timing each word",
-  analyze: "Analyzing the video",
-  prepared: "Almost ready",
-  translate: "Translating",
-  rewrite: "Adjusting the translation to fit",
-  tts: "Recording the voice",
-  plan: "Fitting the video to the voice",
-  voice: "Mixing the voice",
-  render: "Rendering the video",
-  preview: "Making the preview",
-  upload: "Uploading the result",
-};
-
-/** "Rendering the video · 12 of 34" or "Uploading the result · 40%". */
-export function progressText(p: Progress | null) {
-  if (!p?.stage) return null;
-  const label = STAGES[p.stage] ?? "Working";
-  if (!p.total || p.done == null) return label;
-  const bytes = p.stage === "upload" || p.stage === "download";
-  return `${label} · ${bytes ? `${Math.round((100 * p.done) / p.total)}%` : `${p.done} of ${p.total}`}`;
-}
-
-/** The worker checks in every 10-30 seconds; silent for 90 means it's off. */
-export const workerOnline = (workers: Worker[] | null, now: number) =>
-  (workers ?? []).some((w) => now - new Date(w.last_seen).getTime() < 90_000);
 
 export const megabytes = (bytes: number | null) => (bytes ? `${Math.round(bytes / 1e6)} MB` : "");
 

@@ -1,21 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { workerOnline, type Worker } from "@/lib/jobs";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { usePoll } from "@/lib/use-poll";
 
-/** Top bar on every signed-in screen: name, whether the worker Mac is on, who you are. */
+/** Top bar on every signed-in screen: name and who you are. */
 export function Header() {
   const [supabase] = useState(createClient);
-  const [info] = usePoll(async () => {
-    const [{ data: workers }, { data: auth }] = await Promise.all([
-      supabase.from("workers").select("id, last_seen"),
-      supabase.auth.getUser(),
-    ]);
-    return { online: workerOnline(workers as Worker[] | null, Date.now()), email: auth.user?.email ?? "" };
-  }, 10_000);
+  const [info, setInfo] = useState<{ email: string } | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setInfo({ email: data.user?.email ?? "" }));
+  }, [supabase]);
 
   return (
     <header className="border-b border-neutral-200 dark:border-neutral-800">
@@ -23,12 +18,6 @@ export function Header() {
         <Link href="/" className="font-semibold">
           Video Translator
         </Link>
-        {info && (
-          <span className="flex items-center gap-1.5 text-xs text-neutral-500" title="The Mac that transcribes, translates and voices the videos">
-            <span className={`h-2 w-2 rounded-full ${info.online ? "bg-emerald-500" : "bg-neutral-400"}`} />
-            {info.online ? "Worker Mac online" : "Worker Mac offline"}
-          </span>
-        )}
         <form action="/auth/signout" method="post" className="ml-auto flex items-center gap-3 text-xs text-neutral-500">
           <span className="hidden sm:inline">{info?.email}</span>
           <Link href="/settings" className="underline">

@@ -4,7 +4,7 @@ import { objectSize } from "@/lib/r2";
 import { getUser } from "@/lib/supabase/server";
 
 // POST /api/jobs/<id>/submit: the browser finished uploading. Checks the video really is in storage,
-// then puts the job in the queue for the worker.
+// then the job is "preparing": the job page measures and transcribes it (lib/prepare).
 export async function POST(_request: NextRequest, ctx: RouteContext<"/api/jobs/[id]/submit">) {
   const { id } = await ctx.params;
   const { supabase, user } = await getUser();

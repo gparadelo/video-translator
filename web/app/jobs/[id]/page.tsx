@@ -2,31 +2,23 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { PrepareOutput } from "@/components/PrepareOutput";
 import { ProduceOutput } from "@/components/ProduceOutput";
 import { ReadyOutput, useBrowserSupport } from "@/components/RenderOutput";
 import { TitlesCard } from "@/components/Titles";
 import { VoicedOutput } from "@/components/VoicedOutput";
 import { Bar, Button, Card, Notice, Pill, StatusPill } from "@/components/ui";
-import {
-  api,
-  langName,
-  megabytes,
-  progressText,
-  splitBeats,
-  uploadVideo,
-  workerOnline,
-  type Job,
-  type Output,
-  type Worker,
-} from "@/lib/jobs";
+import { langName, megabytes, splitBeats, type Job, type Output } from "@/lib/jobs";
+import { checkVideo } from "@/lib/prepare/checks";
+import { keepFile, keptFile, measureKept, uploadKept } from "@/lib/prepare/files";
 import { useRenderGuard } from "@/lib/render/guard";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
 
-type Loaded = { job: Job | null; outputs: Output[]; online: boolean };
+type Loaded = { job: Job | null; outputs: Output[] };
 type Act = (fn: string, args?: Record<string, unknown>) => Promise<void>;
 
 // One project: its title in every language (if it has one), and for its video whatever the current step
@@ -45,17 +37,12 @@ function JobView() {
   const [error, setError] = useState("");
 
   const [data, refresh] = usePoll<Loaded>(async () => {
-    const [job, outputs, workers] = await Promise.all([
+    const [job, outputs] = await Promise.all([
       supabase.from("jobs").select("*").eq("id", id).maybeSingle(),
       supabase.from("job_outputs").select("*").eq("job_id", id).order("lang"),
-      supabase.from("workers").select("id, last_seen"),
     ]);
     if (job.error) throw job.error;
-    return {
-      job: job.data as Job | null,
-      outputs: (outputs.data ?? []) as Output[],
-      online: workerOnline(workers.data as Worker[] | null, Date.now()),
-    };
+    return { job: job.data as Job | null, outputs: (outputs.data ?? []) as Output[] };
   }, 3000);
 
   // Move the job forward (approve, retry, cancel): these are database functions the person may call.
@@ -67,7 +54,7 @@ function JobView() {
   };
 
   if (!data) return <Page><p className="text-sm text-neutral-500">Loading…</p></Page>;
-  const { job, outputs, online } = data;
+  const { job, outputs } = data;
   if (!job) {
     return (
       <Page>
@@ -86,19 +73,18 @@ function JobView() {
     );
   }
 
-  // the worker's part: transcribing (queued, preparing) and timing an edited transcript (approved, aligning)
-  const waiting = job.status === "queued" || job.status === "approved";
-  const working = job.status === "preparing" || job.status === "aligning";
+  // this page measures and transcribes a new video (preparing) and times an edited transcript (aligning)
+  const preparing = job.status === "preparing" || job.status === "aligning";
   const producing = job.status === "producing"; // this page makes the languages
-  // also while the worker times an edited transcript (approved), so a video rendering in this tab keeps going
-  const showOutputs = outputs.length > 0 && ["approved", "aligning", "producing", "done", "failed"].includes(job.status);
+  // also while an edited transcript is timed again (aligning), so a video rendering in this tab keeps going
+  const showOutputs = outputs.length > 0 && ["aligning", "producing", "done", "failed"].includes(job.status);
 
   return (
     <Page>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="min-w-0 truncate text-xl font-semibold">{job.name}</h1>
         <StatusPill status={job.status} />
-        {(waiting || working || producing || job.status === "needs_review" || job.status === "uploading") && (
+        {(preparing || producing || job.status === "needs_review" || job.status === "uploading") && (
           <button
             onClick={() => confirm("Cancel this video?") && act("cancel_job")}
             className="ml-auto text-sm text-neutral-500 underline"
@@ -109,32 +95,11 @@ function JobView() {
       </div>
 
       {error && <Notice tone="bad">{error}</Notice>}
-      {(waiting || working) && !online && (
-        <Notice tone="action">
-          The worker Mac is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
-        </Notice>
-      )}
-
       {job.status !== "canceled" && <TitlesCard job={job} onSaved={refresh} />}
 
       {job.status === "uploading" && <FinishUpload job={job} onDone={refresh} />}
 
-      {(waiting || working) && (
-        <Card className="flex flex-col gap-2">
-          <p className="font-medium">
-            {waiting
-              ? "Waiting for the worker Mac to pick this up…"
-              : (progressText(job.progress) ?? (job.status === "preparing" ? "Transcribing…" : "Timing the transcript…"))}
-            {working && job.progress?.lang && ` (${langName(job.progress.lang)})`}
-          </p>
-          {working && job.progress?.total ? <Bar fraction={(job.progress.done ?? 0) / job.progress.total} /> : null}
-          <p className="text-sm text-neutral-500">
-            {job.status === "approved" || job.status === "aligning"
-              ? "The worker times the transcript again (it was edited, or made by an older version). Then the translation starts on this page."
-              : "This takes a minute or two. Then you check the transcript before anything is translated."}
-          </p>
-        </Card>
-      )}
+      {preparing && <PrepareOutput key={`${job.id}-${job.status}`} job={job} onChanged={refresh} />}
 
       {job.status === "failed" && (
         <Notice tone="bad">
@@ -168,22 +133,21 @@ function JobView() {
   );
 }
 
-/** The upload didn't finish (page closed, connection dropped): choose the file again. */
+/**
+ * The video's upload: started here with the file the new-project page handed over (it's measured at the same
+ * time), or, when this tab doesn't have it any more (page closed, connection dropped), with the file chosen again.
+ */
 function FinishUpload({ job, onDone }: { job: Job; onDone: () => Promise<void> }) {
-  const [fraction, setFraction] = useState<number | null>(null);
+  const [kept, setKept] = useState(() => keptFile(job.id) !== null);
+  const [fraction, setFraction] = useState<number | null>(kept ? 0 : null);
   const [error, setError] = useState("");
 
-  async function upload(file: File) {
+  async function run(promise: Promise<void> | null) {
+    if (!promise) return setKept(false);
     setError("");
-    if (file.size !== job.source_bytes) {
-      setError(`That isn't the same file (${megabytes(file.size)} instead of ${megabytes(job.source_bytes)}). Choose "${job.source_filename}".`);
-      return;
-    }
     setFraction(0);
     try {
-      const { upload } = await api<{ upload: { url: string; headers: Record<string, string> } }>(`/api/jobs/${job.id}/upload-url`);
-      await uploadVideo(file, upload, setFraction);
-      await api(`/api/jobs/${job.id}/submit`);
+      await promise;
       await onDone();
     } catch (e) {
       setError(`The upload failed: ${(e as Error).message}. Try again.`);
@@ -191,23 +155,65 @@ function FinishUpload({ job, onDone }: { job: Job; onDone: () => Promise<void> }
     setFraction(null);
   }
 
+  // the file from the new-project page: upload it straight away (once, whatever renders this)
+  useEffect(() => {
+    if (!keptFile(job.id)) return;
+    let live = true;
+    uploadKept(job.id, (f) => live && setFraction(f))
+      ?.then(() => (live ? onDone() : undefined))
+      .catch((e) => {
+        if (!live) return;
+        setError(`The upload failed: ${(e as Error).message}. Try again.`);
+        setFraction(null);
+      });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per project
+  }, [job.id]);
+
+  async function chosen(file: File) {
+    setError("");
+    if (file.size !== job.source_bytes) {
+      setError(`That isn't the same file (${megabytes(file.size)} instead of ${megabytes(job.source_bytes)}). Choose "${job.source_filename}".`);
+      return;
+    }
+    const check = await checkVideo(file);
+    if (!check.ok) return setError(check.reason);
+    keepFile(job.id, file);
+    measureKept(job.id, true)?.catch(() => {}); // measured while it uploads; the prepare card picks it up
+    setKept(true);
+    await run(uploadKept(job.id, setFraction));
+  }
+
   return (
     <Card className="flex flex-col gap-3">
-      <p className="font-medium">The upload didn&apos;t finish.</p>
-      {fraction === null ? (
-        <label className="text-sm">
-          Choose <b>{job.source_filename}</b> again to continue:
-          <input
-            type="file"
-            accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
-            onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-            className="mt-2 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:file:bg-neutral-700"
-          />
-        </label>
+      {fraction === null && !kept ? (
+        <>
+          <p className="font-medium">The upload didn&apos;t finish.</p>
+          <label className="text-sm">
+            Choose <b>{job.source_filename}</b> again to continue:
+            <input
+              type="file"
+              accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
+              onChange={(e) => e.target.files?.[0] && chosen(e.target.files[0])}
+              className="mt-2 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:file:bg-neutral-700"
+            />
+          </label>
+        </>
       ) : (
         <>
-          <Bar fraction={fraction} />
-          <p className="text-sm text-neutral-500">Uploading… {Math.round(fraction * 100)}%. Keep this page open.</p>
+          <p className="font-medium">Uploading the video…</p>
+          <Bar fraction={fraction ?? 0} />
+          <p className="text-sm text-neutral-500">
+            {Math.round((fraction ?? 0) * 100)}%. Keep this page open. The video is read here at the same time, so the
+            transcript is ready sooner.
+          </p>
+          {error && (
+            <Button kind="plain" className="self-start" onClick={() => run(uploadKept(job.id, setFraction))}>
+              Try again
+            </Button>
+          )}
         </>
       )}
       {error && <Notice tone="bad">{error}</Notice>}
