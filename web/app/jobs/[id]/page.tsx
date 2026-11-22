@@ -7,6 +7,7 @@ import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
 import { ReadyOutput, useBrowserSupport } from "@/components/RenderOutput";
 import { TitlesCard } from "@/components/Titles";
+import { VoicedOutput } from "@/components/VoicedOutput";
 import { Bar, Button, Card, Notice, Pill, StatusPill } from "@/components/ui";
 import {
   api,
@@ -269,7 +270,8 @@ function Review({ job, act }: { job: Job; act: Act }) {
 function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refresh: () => Promise<void> }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
   const rendered = outputs.filter((o) => o.status === "done" && o.output_key);
-  const anyReady = outputs.some((o) => o.status === "ready");
+  // voiced: this tab builds the voice track first; ready: it renders. Older projects need neither.
+  const anyReady = outputs.some((o) => o.status === "ready" || o.status === "voiced");
   const support = useBrowserSupport(anyReady); // older projects don't need the render code
   const [busy, setBusy] = useState<string | null>(null); // the language rendering now: one at a time
   useRenderGuard(busy !== null);
@@ -278,9 +280,11 @@ function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refre
     {rendered.length > 0 && <DownloadAll jobId={job.id} outputs={rendered} />}
     {anyReady && support && <Notice tone="action">{support}</Notice>}
     <div className="grid gap-4 sm:grid-cols-2">
-      {outputs.map((o) => o.status === "ready" ? (
+      {outputs.map((o) => o.status === "voiced" ? (
+        <VoicedOutput key={`${o.lang}-${o.generation}`} job={job} output={o} support={support} onSaved={refresh} />
+      ) : o.status === "ready" ? (
         <ReadyOutput
-          key={o.lang}
+          key={`${o.lang}-${o.generation}`}
           job={job}
           output={o}
           support={support}

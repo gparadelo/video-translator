@@ -47,6 +47,19 @@ export function downloadUrl(key: string, filename?: string, seconds = 60 * 60) {
   );
 }
 
+/** A small object (JSON) read here on the server, or null when it isn't there. Refuses anything over maxBytes. */
+export async function readText(key: string, maxBytes = 2_000_000): Promise<string | null> {
+  try {
+    const obj = await r2().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+    if ((obj.ContentLength ?? 0) > maxBytes) throw new Error(`${key} is too big to read here`);
+    return (await obj.Body?.transformToString("utf-8")) ?? null;
+  } catch (e) {
+    const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404 || (e as { name?: string }).name === "NoSuchKey") return null;
+    throw e;
+  }
+}
+
 /** Size of an object in bytes, or null when it isn't there. */
 export async function objectSize(key: string): Promise<number | null> {
   try {

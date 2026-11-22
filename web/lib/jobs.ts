@@ -25,9 +25,13 @@ export type Job = {
 
 export type Output = {
   lang: string;
-  // ready: the worker made the plan and the voice; the browser renders the video (lib/render).
+  // voiced: the worker recorded the voice (inputs_key); the browser builds the plan and the voice track
+  // (lib/pipeline). ready: plan and voice track are there; the browser renders the video (lib/render).
   // done: rendered by an older worker (output_key is the full video).
-  status: "pending" | "running" | "ready" | "done" | "failed";
+  status: "pending" | "running" | "voiced" | "ready" | "done" | "failed";
+  /** the run of this language the files belong to; a new translation starts a new one */
+  generation: number;
+  inputs_key: string | null;
   seconds: number | null;
   flags: string[];
   output_key: string | null;
