@@ -36,14 +36,15 @@ const SOURCES: [string, string, number | null][] = [
   ["25", "25", null],
 ];
 
-function cases(fps: number): (Segment & { atEnd?: boolean })[] {
-  const out: (Segment & { atEnd?: boolean })[] = [];
+function cases(fps: number): Segment[] {
+  const out: Segment[] = [];
   for (const src_start of [0, 1.2345, 3.31, 5.0167])
     for (const speed of [0.9, 0.93117, 1, 1.04, 1.1])
       for (const src_len of [1, 2.37]) out.push({ src_start, speed, src_len, frames: Math.round((src_len / speed) * fps) });
-  // the clip runs past the end of the 12 s source: the last frame is held
-  out.push({ src_start: 10.5, speed: 0.95, src_len: 1.5, frames: 80, atEnd: true });
-  out.push({ src_start: 11, speed: 1.1, src_len: 1, frames: 45, atEnd: true });
+  // the clip runs past the end of the 12 s source: the last frame is held (here for up to 3 s)
+  out.push({ src_start: 10.5, speed: 0.95, src_len: 1.5, frames: 80 });
+  out.push({ src_start: 11, speed: 1.1, src_len: 1, frames: 45 });
+  out.push({ src_start: 11, speed: 1, src_len: 1, frames: Math.round(4 * fps) });
   return out;
 }
 
@@ -80,17 +81,9 @@ describe.skipIf(!ready)("frame selection matches ffmpeg (vt.segment_cmd)", () =>
 
     list.forEach((c, i) => {
       const ours = selectFrames(source.ticks, segmentTiming(c, fps, source.timescale, source.fileStart));
-      const theirs = ffmpeg[i];
       const label = `${name} fps, clip ${JSON.stringify(c)}`;
       expect(ours, label).toHaveLength(c.frames);
-      if (c.atEnd) {
-        // ffmpeg's tpad holds the last frame for 1 s only (stop_duration=1); the browser holds it to the end
-        expect(theirs.length, label).toBeLessThanOrEqual(c.frames);
-        expect(ours.slice(0, theirs.length), label).toEqual(theirs);
-        expect(new Set(ours.slice(theirs.length - 1)), label).toEqual(new Set([theirs.at(-1)]));
-      } else {
-        expect(ours, label).toEqual(theirs);
-      }
+      expect(ours, label).toEqual(ffmpeg[i]);
     });
   });
 });

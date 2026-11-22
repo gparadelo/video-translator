@@ -1090,8 +1090,9 @@ def build_voice_track(P, A, plan) -> Path:
 
 def segment_filter(s: dict, fps: float, W: int, H: int) -> str:
     """How one clip is retimed: its frames slowed down or sped up, resampled to the output frame rate, scaled,
-    and the last frame held if the clip runs out. web/lib/render/frames.ts picks the same frames in the browser."""
-    return f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop_duration=1"
+    and the last frame held for as long as the clip needs (-frames:v ends it). web/lib/render/frames.ts picks
+    the same frames in the browser."""
+    return f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop=-1"
 
 
 def segment_cmd(base: str, s: dict, fps: float, W: int, H: int, venc: list[str], out: str) -> list[str]:

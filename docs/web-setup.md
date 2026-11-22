@@ -131,8 +131,11 @@ Everything for a job is under `u/<user id>/<job id>/` in R2:
 source's frame rate; the output has the same), `total_frames`, and per clip in `segments`: `src_start` and
 `src_len` (seconds of the source), `speed` and `frames` (exactly how many output frames). Each clip is retimed
 exactly as `vt.segment_cmd`'s ffmpeg command would (see [web/lib/render/frames.ts](../web/lib/render/frames.ts)),
-except that the last frame is held for as long as the plan says (ffmpeg holds it for 1 second at most).
-`beats`, `anchors`, `flags` and `source` (`width`, `height`) are there for information.
+the last frame held for as long as the clip needs when it runs past the end of the footage. `source`
+(`width`, `height`) is the size ffmpeg shows the source at (rotation applied, `vt.video_size`): the browser
+renders at that size, like the CLI, and stops with a message if it reads the rotation the other way. `voice`
+(`file`, `sample_rate`, `channels`) describes `voice.wav`, which must match it and be as long as the video.
+`beats`, `anchors` and `flags` are there for information.
 
 `voice.wav` is `vt.build_voice_track`: 16-bit PCM, 44.1 kHz, stereo, loudness matched to the original
 voiceover and limited, exactly `total_frames / fps` long. These are the samples the AAC encoder gets, in the

@@ -134,9 +134,9 @@ def compare(video: Path, ref: Path) -> dict:
     best = min(range(-300, 301), key=lambda off: sum(abs(a[i] - b[i + off]) for i in range(4096, n - 4096, 97)))
     err = sum((a[i] - b[i]) ** 2 for i in range(n)) / max(1, sum(x * x for x in b[:n]))
     return {"width": vs["width"], "height": vs["height"], "codec": vs["codec_name"], "frames": len(got),
-            "ref_frames": len(want), "prefix_match": got[:len(want)] == want,
-            "held_tail": all(c == want[-1] for c in got[len(want) - 1:]),
-            "first_mismatch": next((i for i, (x, y) in enumerate(zip(got, want)) if x != y), None),
+            "ref_frames": len(want), "same": got == want,
+            "first_mismatch": next((i for i, (x, y) in enumerate(zip(got, want)) if x != y),
+                                   None if len(got) == len(want) else min(len(got), len(want))),
             "audio_samples": len(a), "ref_audio_samples": len(b), "audio_offset": best, "audio_rel_error": err,
             "duration": float(vt.probe(video)["format"]["duration"])}
 

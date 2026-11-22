@@ -2,7 +2,7 @@
 // command does for one plan segment (vt.segment_cmd):
 //
 //   ffmpeg -ss <src_start> -t <src_len + 0.1> -i source
-//          -vf setpts=(PTS-STARTPTS)/<speed>,fps=<fps>,scale=W:H,tpad=stop_mode=clone -frames:v <frames>
+//          -vf setpts=(PTS-STARTPTS)/<speed>,fps=<fps>,scale=W:H,tpad=stop_mode=clone:stop=-1 -frames:v <frames>
 //
 // 1. Input seek (-ss, accurate): frames whose timestamp is before the seek point are dropped.
 // 2. -t: frames from `src_len + 0.1` seconds after the first kept frame on are dropped.
@@ -13,9 +13,8 @@
 // 5. tpad=clone + -frames:v: the last frame is held until the clip has exactly `frames` frames.
 //
 // Everything is done in whole ticks of the source track's time base, like ffmpeg, so ties round the same way.
-// test/ffmpeg-frames.test.ts checks this against ffmpeg itself. One deliberate difference: ffmpeg's tpad
-// only holds for 1 second (stop_duration=1), so when the voice runs more than a second past the end of the
-// footage ffmpeg's clip comes out short; here the last frame is held for the whole planned length.
+// test/ffmpeg-frames.test.ts checks this against ffmpeg itself, including clips that run past the end of the
+// footage by more than a second.
 
 import { divRoundNear, ffmpegRate, pyFixed, type Rational } from "./numbers";
 

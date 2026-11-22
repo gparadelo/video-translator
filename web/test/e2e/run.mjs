@@ -98,10 +98,9 @@ try {
     const c = JSON.parse(py("compare", join(dir, `${mode}.mp4`), reference));
     const sourceRanges = ranges.filter(([p]) => p === "/files/source.mp4");
     const checks = {
-      "exact frame count": c.frames === plan.total_frames && r.frames === plan.total_frames,
+      "exact frame count": c.frames === plan.total_frames && r.frames === plan.total_frames && c.ref_frames === plan.total_frames,
       "every frame encoded": r.encoded === plan.total_frames,
-      "same frames as vt.py": c.prefix_match,
-      "last frame held to the end": c.held_tail,
+      "same frames as vt.py, the held last frame too": c.same,
       "voice lined up (within 1 sample)": Math.abs(c.audio_offset) <= 1,
       "voice matches (AAC noise only)": c.audio_rel_error < 0.01,
       "source read in ranges": sourceRanges.length > 0,
@@ -110,12 +109,12 @@ try {
       `${(r.bytes / 1e6).toFixed(1)} MB, ${(r.ms / 1000).toFixed(1)} s (estimated ${(r.estimatedMs / 1000).toFixed(1)} s), ` +
       `peak JS heap ${r.peakHeapMB.toFixed(0)} MB, ${sourceRanges.length} range reads of the source`);
     console.log(`  audio offset ${c.audio_offset} samples, relative error ${c.audio_rel_error.toExponential(2)}; ` +
-      `reference has ${c.ref_frames} frames (ffmpeg's tpad holds the last frame for 1 s at most)`);
+      `reference has ${c.ref_frames} frames`);
     for (const [name, ok] of Object.entries(checks)) {
       console.log(`  ${ok ? "ok  " : "FAIL"} ${name}`);
       failed ||= !ok;
     }
-    if (!c.prefix_match) console.log(`  first different frame: ${c.first_mismatch}`);
+    if (!c.same) console.log(`  first different frame: ${c.first_mismatch}`);
   }
 
   // the download path: private storage, then a normal download; and a stopped render leaves nothing behind
@@ -124,7 +123,7 @@ try {
   const saved = JSON.parse(py("compare", join(dir, "saved.mp4"), reference));
   const stop = await page.evaluate(() => window.runSave(400));
   const saveChecks = {
-    "download: same frames as vt.py": saved.prefix_match && saved.held_tail && saved.frames === plan.total_frames,
+    "download: same frames as vt.py": saved.same && saved.frames === plan.total_frames,
     "stopped render: nothing left behind": stop.stopped && stop.leftovers.length === 0,
   };
   console.log(`
