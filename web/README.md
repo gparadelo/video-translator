@@ -23,9 +23,9 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 ## Settings
 
 Copy `.env.example` to `.env.local` and fill it in (see [docs/web-setup.md](../docs/web-setup.md)); set the same
-variables in Vercel. `ANTHROPIC_API_KEY` is the Claude API key used server-side by the title translator
-(`/titles`, `app/api/titles/route.ts`), which turns one title into every supported language as plain
-ASCII titles of at most 60 characters.
+variables in Vercel. `ANTHROPIC_API_KEY` is the Claude API key used server-side to translate a project's title
+(`app/api/jobs/[id]/title/route.ts`, `lib/translate-title.ts`) into the project's languages as plain
+ASCII titles of at most 60 characters. A project has a video, a title, or both.
 
 ## Learn More
 

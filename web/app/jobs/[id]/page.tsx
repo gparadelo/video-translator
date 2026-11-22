@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { TitlesCard } from "@/components/Titles";
 import { Bar, Button, Card, Notice, Pill, StatusPill } from "@/components/ui";
 import {
   api,
@@ -24,8 +25,8 @@ import { usePoll } from "@/lib/use-poll";
 type Loaded = { job: Job | null; outputs: Output[]; online: boolean };
 type Act = (fn: string, args?: Record<string, unknown>) => Promise<void>;
 
-// One video: shows whatever its current step needs (finish the upload, wait, review the transcript,
-// watch progress, get the results).
+// One project: its title in every language (if it has one), and for its video whatever the current step
+// needs (finish the upload, wait, review the transcript, watch progress, get the results).
 export default function JobPage() {
   return (
     <Suspense fallback={<Page><p className="text-sm text-neutral-500">Loading…</p></Page>}>
@@ -66,8 +67,17 @@ function JobView() {
   if (!job) {
     return (
       <Page>
-        <p>This video doesn&apos;t exist (or isn&apos;t yours).</p>
-        <Link href="/" className="underline">Back to your videos</Link>
+        <p>This project doesn&apos;t exist (or isn&apos;t yours).</p>
+        <Link href="/" className="underline">Back to your projects</Link>
+      </Page>
+    );
+  }
+
+  if (!job.has_video) {
+    return (
+      <Page>
+        <h1 className="min-w-0 truncate text-xl font-semibold">{job.name}</h1>
+        <TitlesCard job={job} onSaved={refresh} />
       </Page>
     );
   }
@@ -97,6 +107,8 @@ function JobView() {
           The render Mac is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
         </Notice>
       )}
+
+      {job.status !== "canceled" && <TitlesCard job={job} onSaved={refresh} />}
 
       {job.status === "uploading" && <FinishUpload job={job} onDone={refresh} />}
 

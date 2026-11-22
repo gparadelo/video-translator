@@ -1,4 +1,4 @@
-// Rules for translated video titles, shared by the /titles page and /api/titles.
+// Rules for translated video titles, shared by the project screens and lib/translate-title.ts.
 
 export const MAX_TITLE = 60;
 

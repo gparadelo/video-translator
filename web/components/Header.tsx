@@ -23,9 +23,6 @@ export function Header() {
         <Link href="/" className="font-semibold">
           Video Translator
         </Link>
-        <Link href="/titles" className="text-sm text-neutral-600 hover:underline dark:text-neutral-300">
-          Translate a title
-        </Link>
         {info && (
           <span className="flex items-center gap-1.5 text-xs text-neutral-500" title="The Mac that renders the videos">
             <span className={`h-2 w-2 rounded-full ${info.online ? "bg-emerald-500" : "bg-neutral-400"}`} />

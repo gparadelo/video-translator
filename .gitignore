@@ -4,3 +4,4 @@ config.toml
 .DS_Store
 __pycache__/
 .claude/worktrees/
+supabase/.temp/

@@ -4,20 +4,28 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
+import { TitleLanguage } from "@/components/Titles";
 import { Bar, Button, Card, Notice } from "@/components/ui";
 import { api, megabytes, uploadVideo, type Job } from "@/lib/jobs";
 import { createClient } from "@/lib/supabase/client";
+import { MAX_TITLE } from "@/lib/titles";
 
-type Created = { job: Job; upload: { url: string; headers: Record<string, string> } };
+type Created = { job: Job; upload: { url: string; headers: Record<string, string> } | null };
 
-// New video: pick the file and the languages, upload, and go to the video's page.
-export default function NewVideo() {
+const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base font-normal dark:border-neutral-700";
+
+// New project: a video, a title, or both, and the languages to translate them into.
+// The video uploads and the title translates at the same time; then we go to the project's page.
+export default function NewProject() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState("");
+  const [titleLang, setTitleLang] = useState("auto");
   const [name, setName] = useState("");
   const [languages, setLanguages] = useState<string[]>([]);
   const [reference, setReference] = useState("");
   const [fraction, setFraction] = useState<number | null>(null);
+  const [step, setStep] = useState("");
   const [error, setError] = useState("");
 
   // Start with the languages saved on the person's profile.
@@ -29,50 +37,62 @@ export default function NewVideo() {
       .then(({ data }) => data?.languages && setLanguages((cur) => (cur.length ? cur : data.languages)));
   }, []);
 
-  function choose(f: File | null) {
-    setFile(f);
-    if (f && !name) setName(f.name.replace(/\.[^.]+$/, ""));
-  }
+  // The name defaults to the video's file name, else the title.
+  const fallbackName = file ? file.name.replace(/\.[^.]+$/, "") : title.trim().slice(0, 120);
+  const projectName = name.trim() || fallbackName;
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) return;
     setError("");
-    setFraction(0);
+    setStep("Creating the project…");
     try {
       const { job, upload } = await api<Created>("/api/jobs", {
-        name,
-        filename: file.name,
-        bytes: file.size,
+        name: projectName,
         languages,
-        reference,
+        title: title.trim() || undefined,
+        title_lang: titleLang === "auto" ? undefined : titleLang,
+        ...(file && { filename: file.name, bytes: file.size, reference }),
       });
-      try {
-        await uploadVideo(file, upload, setFraction);
-        await api(`/api/jobs/${job.id}/submit`);
-      } finally {
-        router.push(`/jobs/${job.id}`); // if the upload failed, that page offers to try again
+      // If either part fails, the project page shows it and offers to try again.
+      const titled = title.trim() ? api(`/api/jobs/${job.id}/title`, { missing: false }).catch(() => null) : null;
+      if (file && upload) {
+        setFraction(0);
+        setStep(title.trim() ? "Uploading the video and translating the title…" : "Uploading…");
+        try {
+          await uploadVideo(file, upload, setFraction);
+          await api(`/api/jobs/${job.id}/submit`);
+        } catch {
+          // the project page offers to finish the upload
+        }
+      } else {
+        setStep("Translating the title…");
       }
+      await titled;
+      router.push(`/jobs/${job.id}`);
     } catch (err) {
       setError((err as Error).message);
+      setStep("");
       setFraction(null);
     }
   }
 
-  const busy = fraction !== null;
+  const busy = step !== "";
+  const ready = (file || title.trim()) && projectName && languages.length > 0;
   return (
     <Page>
-      <h1 className="text-xl font-semibold">New video</h1>
+      <h1 className="text-xl font-semibold">New project</h1>
+      <p className="-mt-3 text-sm text-neutral-500">Translate a video, a title, or both. Each part is optional.</p>
       <form onSubmit={start} className="flex flex-col gap-5">
         <Card className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Video
+            <span>
+              Video <span className="font-normal text-neutral-500">(optional)</span>
+            </span>
             <input
               type="file"
               accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
-              required
               disabled={busy}
-              onChange={(e) => choose(e.target.files?.[0] ?? null)}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="rounded-lg border border-dashed border-neutral-300 p-4 text-sm font-normal file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:border-neutral-700 dark:file:bg-neutral-700"
             />
             <span className="text-xs font-normal text-neutral-500">
@@ -80,49 +100,81 @@ export default function NewVideo() {
               {file && ` Selected: ${megabytes(file.size)}.`}
             </span>
           </label>
+          {file && (
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              <span>
+                Names in the video <span className="font-normal text-neutral-500">(optional)</span>
+              </span>
+              <textarea
+                value={reference}
+                rows={2}
+                disabled={busy}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="Brand and product names as they are written, or the whole written script"
+                className={`${field} text-sm`}
+              />
+              <span className="text-xs font-normal text-neutral-500">
+                Helps get the spelling of names right in the transcript.
+              </span>
+            </label>
+          )}
+        </Card>
+
+        <Card className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Name
+            <span>
+              Title <span className="font-normal text-neutral-500">(optional)</span>
+            </span>
             <input
-              value={name}
-              required
-              maxLength={120}
+              value={title}
+              maxLength={300}
               disabled={busy}
-              onChange={(e) => setName(e.target.value)}
-              className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base font-normal dark:border-neutral-700"
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="The title of your video"
+              className={field}
             />
           </label>
+          {title.trim() && <TitleLanguage value={titleLang} onChange={setTitleLang} disabled={busy} />}
+          <p className="text-xs text-neutral-500">
+            Translated into the same languages as the video: plain letters (no accents), at most {MAX_TITLE}{" "}
+            characters, each with a Copy button.
+          </p>
         </Card>
 
         <Card className="flex flex-col gap-3">
           <h2 className="text-sm font-medium">Translate into</h2>
           <LanguagePicker value={languages} onChange={setLanguages} />
-          <p className="text-xs text-neutral-500">You can change these again before the translation starts.</p>
+          <p className="text-xs text-neutral-500">
+            You can change these again before the video&apos;s translation starts.
+          </p>
         </Card>
 
-        <Card className="flex flex-col gap-1.5">
+        <Card>
           <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Names in the video <span className="font-normal text-neutral-500">(optional)</span>
-            <textarea
-              value={reference}
-              rows={2}
+            Project name
+            <input
+              value={name}
+              maxLength={120}
               disabled={busy}
-              onChange={(e) => setReference(e.target.value)}
-              placeholder="Brand and product names as they are written, or the whole written script"
-              className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm font-normal dark:border-neutral-700"
+              onChange={(e) => setName(e.target.value)}
+              placeholder={fallbackName || "Named after the video or the title"}
+              className={field}
             />
           </label>
-          <p className="text-xs text-neutral-500">Helps get the spelling of names right in the transcript.</p>
         </Card>
 
         {error && <Notice tone="bad">{error}</Notice>}
         {busy ? (
           <div className="flex flex-col gap-2">
-            <Bar fraction={fraction} />
-            <p className="text-sm text-neutral-500">Uploading… {Math.round(fraction * 100)}%. Keep this page open.</p>
+            {fraction !== null && <Bar fraction={fraction} />}
+            <p className="text-sm text-neutral-500">
+              {step}
+              {fraction !== null && ` ${Math.round(fraction * 100)}%.`} Keep this page open.
+            </p>
           </div>
         ) : (
-          <Button type="submit" disabled={!file || !name.trim() || languages.length === 0} className="self-start">
-            Upload and transcribe
+          <Button type="submit" disabled={!ready} className="self-start">
+            {file && title.trim() ? "Upload and translate" : file ? "Upload and transcribe" : "Translate title"}
           </Button>
         )}
       </form>

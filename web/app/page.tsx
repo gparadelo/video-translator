@@ -3,38 +3,38 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Page } from "@/components/Header";
-import { Card, StatusPill } from "@/components/ui";
+import { Card, Pill, StatusPill } from "@/components/ui";
 import { langName, type Job } from "@/lib/jobs";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
 
-// Home: your videos, newest first, with where each one stands.
+// Home: your projects (a video, a title, or both), newest first, with where each one stands.
 export default function Home() {
   const [supabase] = useState(createClient);
   const [jobs] = usePoll(async () => {
     const { data, error } = await supabase
       .from("jobs")
-      .select("id, name, status, languages, created_at")
+      .select("id, name, status, languages, created_at, has_video, title")
       .order("created_at", { ascending: false });
     if (error) throw error;
-    return data as Pick<Job, "id" | "name" | "status" | "languages" | "created_at">[];
+    return data as Pick<Job, "id" | "name" | "status" | "languages" | "created_at" | "has_video" | "title">[];
   }, 8000);
 
   return (
     <Page>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Your videos</h1>
+        <h1 className="text-xl font-semibold">Your projects</h1>
         <Link
           href="/new"
           className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
-          New video
+          New project
         </Link>
       </div>
 
       {jobs === null && <p className="text-sm text-neutral-500">Loading…</p>}
       {jobs?.length === 0 && (
-        <Card className="text-sm text-neutral-500">Nothing here yet. Upload a video to translate it.</Card>
+        <Card className="text-sm text-neutral-500">Nothing here yet. Start a project to translate a video, a title, or both.</Card>
       )}
       <ul className="flex flex-col gap-2">
         {jobs?.map((j) => (
@@ -50,7 +50,10 @@ export default function Home() {
                   {j.languages.length > 0 && ` · ${j.languages.map(langName).join(", ")}`}
                 </span>
               </span>
-              <StatusPill status={j.status} />
+              <span className="flex shrink-0 items-center gap-1.5">
+                {j.title && <Pill tone="idle">{j.has_video ? "+ Title" : "Title only"}</Pill>}
+                {j.has_video && <StatusPill status={j.status} />}
+              </span>
             </Link>
           </li>
         ))}

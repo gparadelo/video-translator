@@ -1,4 +1,5 @@
-// Shared by the screens (browser side): what a job looks like, and the words we show for it.
+// Shared by the screens (browser side): what a job (a project: a video, a title, or both) looks like, and
+// the words we show for it.
 
 export type Progress = { stage?: string; lang?: string; done?: number; total?: number };
 
@@ -16,6 +17,10 @@ export type Job = {
   source_filename: string | null;
   source_bytes: number | null;
   created_at: string;
+  has_video: boolean;
+  title: string | null;
+  title_lang: string | null;
+  titles: Record<string, string>; // includes title_lang: the original, cleaned to the same rules
 };
 
 export type Output = {
