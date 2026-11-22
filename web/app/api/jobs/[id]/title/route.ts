@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { fail } from "@/lib/api";
 import { LANGS } from "@/lib/jobs";
+import { myKeys, UnreadableKey } from "@/lib/secrets";
 import { getUser } from "@/lib/supabase/server";
 import { TitleError, translateTitle } from "@/lib/translate-title";
 
@@ -36,7 +37,9 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[i
   if (missing && !targets.length) return NextResponse.json({ job });
 
   try {
-    const t = await translateTitle(title, given, targets);
+    const { anthropic } = await myKeys(supabase, user.id);
+    if (!anthropic) return fail(409, "add your Claude API key in Settings first");
+    const t = await translateTitle(anthropic, title, given, targets);
     const { data, error } = await supabase.rpc("set_titles", {
       p_job: id,
       p_title: title,
@@ -48,6 +51,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[i
     return NextResponse.json({ job: data });
   } catch (err) {
     if (err instanceof TitleError) return fail(err.status, err.message);
+    if (err instanceof UnreadableKey) return fail(409, err.message);
     return fail(500, (err as Error).message);
   }
 }

@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Page } from "@/components/Header";
-import { Card, Pill, StatusPill } from "@/components/ui";
+import { Card, Notice, Pill, StatusPill } from "@/components/ui";
 import { langName, type Job } from "@/lib/jobs";
+import { listOf, missingFor, toStatus } from "@/lib/setup";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
 
@@ -19,6 +20,8 @@ export default function Home() {
     if (error) throw error;
     return data as Pick<Job, "id" | "name" | "status" | "languages" | "created_at" | "has_video" | "title">[];
   }, 8000);
+  const [setup] = usePoll(async () => toStatus((await supabase.rpc("my_key_status")).data), 60_000);
+  const missing = missingFor(setup, { video: true, title: true });
 
   return (
     <Page>
@@ -31,6 +34,16 @@ export default function Home() {
           New project
         </Link>
       </div>
+
+      {missing.length > 0 && (
+        <Notice tone="action">
+          Before your first project, add {listOf(missing)} in{" "}
+          <Link href="/settings" className="underline">
+            Settings
+          </Link>
+          . Your projects use your own ElevenLabs and Claude accounts.
+        </Notice>
+      )}
 
       {jobs === null && <p className="text-sm text-neutral-500">Loading…</p>}
       {jobs?.length === 0 && (

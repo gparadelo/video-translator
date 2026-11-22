@@ -115,11 +115,24 @@ def load_env():
                 os.environ[k] = v
 
 
+# Keys for the job being run, set by the web app's worker (each person's own keys). They win over the
+# environment; KEYS_WHERE is where error messages tell people to fix a key.
+_job_keys: dict[str, str] = {}
+KEYS_WHERE = "/plugin -> video-translator -> Configure (standalone: the .env file)"
+
+
+def use_keys(**keys: str):
+    """use_keys(ELEVENLABS_API_KEY=..., ANTHROPIC_API_KEY=...) for the next job; use_keys() clears them."""
+    _job_keys.clear()
+    _job_keys.update({k: v for k, v in keys.items() if v})
+
+
 def env(name: str) -> str:
+    if _job_keys.get(name):
+        return _job_keys[name]
     v = os.environ.get(name, "").strip()
     if not v or v.startswith("${"):
-        die(f"{name} is not set. In Claude Code: /plugin -> video-translator -> configure. "
-            f"Standalone: put it in a .env file (see .env.example).")
+        die(f"{name} is not set. Set it in {KEYS_WHERE}.")
     return v
 
 
@@ -177,8 +190,8 @@ def api_error(what: str, r, permission: str):
         die(f"{what} failed: your ElevenLabs API key is missing the '{permission}' permission. "
             f"Edit the key at elevenlabs.io (Developers -> API keys) and enable: {', '.join(KEY_PERMISSIONS)}.")
     if r.status_code == 401:
-        die(f"{what} failed: ElevenLabs rejected the API key (401). Check it in /plugin -> video-translator -> "
-            f"Configure. It needs these permissions: {', '.join(KEY_PERMISSIONS)}.\n{r.text[:300]}")
+        die(f"{what} failed: ElevenLabs rejected the API key (401). Check it in {KEYS_WHERE}. "
+            f"It needs these permissions: {', '.join(KEY_PERMISSIONS)}.\n{r.text[:300]}")
     die(f"{what} failed ({r.status_code}): {r.text[:500]}")
 
 
@@ -571,10 +584,10 @@ def claude_json(cfg, system: str, schema: dict, messages: list[dict]) -> tuple[d
 
     C = cfg.get("claude", {})
     model = C.get("model", "claude-opus-5-5")
-    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+    if not _job_keys.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY", "").strip():
         die("ANTHROPIC_API_KEY is not set - put it in the .env file in your jobs folder (see .env.example). "
             "Create one at platform.claude.com -> API keys.")
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=env("ANTHROPIC_API_KEY"))
     try:
         r = client.beta.messages.create(
             model=model, max_tokens=16000, system=system, messages=messages,
@@ -583,7 +596,7 @@ def claude_json(cfg, system: str, schema: dict, messages: list[dict]) -> tuple[d
             betas=["server-side-fallback-2026-07-01"], fallbacks="default",
         )
     except anthropic.AuthenticationError:
-        die("the Claude API rejected ANTHROPIC_API_KEY (401) - check the key in your .env file")
+        die(f"the Claude API rejected the Claude API key (401) - check it in {KEYS_WHERE}")
     except anthropic.APIStatusError as e:
         die(f"Claude API error ({e.status_code}): {e.message}")
     except anthropic.APIConnectionError:

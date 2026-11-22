@@ -6,7 +6,9 @@ import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
 import { TitleLanguage } from "@/components/Titles";
 import { Bar, Button, Card, Notice } from "@/components/ui";
+import Link from "next/link";
 import { api, megabytes, uploadVideo, type Job } from "@/lib/jobs";
+import { listOf, missingFor, toStatus, type SetupStatus } from "@/lib/setup";
 import { createClient } from "@/lib/supabase/client";
 import { MAX_TITLE } from "@/lib/titles";
 
@@ -27,6 +29,7 @@ export default function NewProject() {
   const [fraction, setFraction] = useState<number | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState("");
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
 
   // Start with the languages saved on the person's profile.
   useEffect(() => {
@@ -35,6 +38,9 @@ export default function NewProject() {
       .select("languages")
       .maybeSingle()
       .then(({ data }) => data?.languages && setLanguages((cur) => (cur.length ? cur : data.languages)));
+    createClient()
+      .rpc("my_key_status")
+      .then(({ data }) => setSetup(toStatus(data)));
   }, []);
 
   // The name defaults to the video's file name, else the title.
@@ -77,7 +83,9 @@ export default function NewProject() {
   }
 
   const busy = step !== "";
-  const ready = (file || title.trim()) && projectName && languages.length > 0;
+  // Each person's projects run on their own keys and voice (Settings).
+  const missing = missingFor(setup, { video: Boolean(file), title: Boolean(title.trim()) });
+  const ready = (file || title.trim()) && projectName && languages.length > 0 && !missing.length;
   return (
     <Page>
       <h1 className="text-xl font-semibold">New project</h1>
@@ -163,6 +171,15 @@ export default function NewProject() {
           </label>
         </Card>
 
+        {missing.length > 0 && (
+          <Notice tone="action">
+            First add {listOf(missing)} in{" "}
+            <Link href="/settings" className="underline">
+              Settings
+            </Link>
+            .
+          </Notice>
+        )}
         {error && <Notice tone="bad">{error}</Notice>}
         {busy ? (
           <div className="flex flex-col gap-2">

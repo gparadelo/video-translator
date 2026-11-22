@@ -1,4 +1,4 @@
-// Server only: uses ANTHROPIC_API_KEY. Called from /api/jobs/<id>/title.
+// Server only: runs on the person's own Claude API key (Settings). Called from /api/jobs/<id>/title.
 import Anthropic from "@anthropic-ai/sdk";
 import { LANGS, langName } from "@/lib/jobs";
 import { cleanTitle, MAX_TITLE, NON_LATIN, shorten, toAscii } from "@/lib/titles";
@@ -62,10 +62,9 @@ async function ask(client: Anthropic, prompt: string, codes: string[], first: bo
  * The title in each of `targets` (2-letter codes), every one plain ASCII and at most 60 characters.
  * `given` is the title's language, or null to detect it. The title's own language is never in `titles`.
  */
-export async function translateTitle(title: string, given: string | null, targets: string[]): Promise<Translated> {
-  if (!process.env.ANTHROPIC_API_KEY) throw new TitleError(500, "ANTHROPIC_API_KEY is not set on the server");
+export async function translateTitle(apiKey: string, title: string, given: string | null, targets: string[]): Promise<Translated> {
   const codes = [...new Set(targets.filter((c) => c in LANGS && c !== given))];
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey });
   try {
     const first = await ask(
       client,
@@ -101,7 +100,7 @@ export async function translateTitle(title: string, given: string | null, target
     return { source, original: cleanTitle(first.original ?? "") || cleanTitle(title), titles };
   } catch (err) {
     if (err instanceof TitleError) throw err;
-    if (err instanceof Anthropic.AuthenticationError) throw new TitleError(500, "the server's ANTHROPIC_API_KEY was rejected");
+    if (err instanceof Anthropic.AuthenticationError) throw new TitleError(400, "the Claude API rejected your API key - check it in Settings");
     if (err instanceof Anthropic.RateLimitError) throw new TitleError(429, "too many requests to Claude - wait a moment");
     if (err instanceof Anthropic.APIError) throw new TitleError(502, `Claude API error: ${err.message}`);
     throw err;
