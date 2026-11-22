@@ -85,7 +85,9 @@ export function avReduce(num: bigint, den: bigint, max: bigint): Rational {
  */
 export function ffmpegRate(fps: number): Rational {
   if (!(fps > 0) || !Number.isFinite(fps)) throw new Error(`bad frame rate ${fps}`);
-  const exponent = Math.max(Math.trunc(Math.log(Math.abs(fps) + 1e-20) / Math.LN2), 0);
+  // frexp(fps) - 1, at least 0: floor(log2(fps)), counted exactly (Math.log2 can land just below a power of two)
+  let exponent = 0;
+  while (2 ** (exponent + 1) <= fps) exponent++;
   const den = BigInt(2) ** BigInt(62 - exponent);
   // fps * 2^(62-exponent) is an exact integer-valued double (multiplying by a power of two), below 2^63.
   const scaled = Math.floor(fps * 2 ** (62 - exponent) + 0.5);

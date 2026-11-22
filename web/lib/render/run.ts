@@ -4,10 +4,10 @@
 
 import { BufferTarget } from "mediabunny";
 import { api, uploadVideo } from "@/lib/jobs";
-import { parsePlan, type RenderPlan } from "./plan";
+import { checkVoice, parsePlan, sourceSize, type RenderPlan } from "./plan";
 import { pickQuality, previewQuality, qualityOptions, type Quality, type QualityId } from "./quality";
 import { canEncodeVoice, findEncoder, measureSpeed, missingApis, openSource, renderPlan, type Encoder, type Source } from "./render";
-import { cleanUpTemporaryFiles, type SaveTarget } from "./save";
+import type { SaveTarget } from "./save";
 import { parseWav, type Pcm } from "./wav";
 
 export const UNSUPPORTED = "This browser can't make the videos. Use Chrome or Edge on a computer.";
@@ -33,30 +33,52 @@ async function getJson<T>(url: string): Promise<T> {
   return data as T;
 }
 
-async function fetchOk(url: string, what: string) {
-  const r = await fetch(url);
+const GONE = "the files for this video were removed (they're kept for 30 days)";
+
+async function fetchOk(url: string, what: string, signal?: AbortSignal) {
+  const r = await fetch(url, { signal });
+  if (r.status === 404) throw new Error(GONE);
   if (!r.ok) throw new Error(`couldn't download the ${what} (${r.status})`);
   return r;
 }
 
-type Loaded = { name: string; plan: RenderPlan; source: Source; voice: Pcm | null };
+type Loaded = {
+  name: string;
+  plan: RenderPlan;
+  source: Source;
+  voice: Pcm | null;
+  /** The size to render at (plan.sourceSize). */
+  width: number;
+  height: number;
+};
 
-async function load(jobId: string, lang: string, withVoice: boolean): Promise<Loaded> {
+async function load(jobId: string, lang: string, withVoice: boolean, signal?: AbortSignal): Promise<Loaded> {
   const links = await getJson<Links>(`/api/jobs/${jobId}/render/${lang}`);
   const [plan, voice] = await Promise.all([
-    fetchOk(links.plan, "plan").then((r) => r.json()).then(parsePlan),
-    withVoice ? fetchOk(links.voice, "voice").then((r) => r.arrayBuffer()).then(parseWav) : null,
+    fetchOk(links.plan, "plan", signal).then((r) => r.json()).then(parsePlan),
+    withVoice ? fetchOk(links.voice, "voice", signal).then((r) => r.arrayBuffer()).then(parseWav) : null,
   ]);
-  const source = await openSource(links.source);
-  return { name: links.name, plan, source, voice };
+  if (voice) checkVoice(plan, voice);
+  const source = await openSource(links.source).catch(async (e) => {
+    // a removed source shows up as a failed read; say why when that's it
+    const probe = await fetch(links.source, { headers: { Range: "bytes=0-0" } }).catch(() => null); // the link is for GET only
+    throw probe?.status === 404 ? new Error(GONE) : e;
+  });
+  try {
+    const [width, height] = sourceSize(plan, source.width, source.height);
+    return { name: links.name, plan, source, voice, width, height };
+  } catch (e) {
+    source.dispose();
+    throw e;
+  }
 }
 
 /** Render the 720p preview and upload it. The page shows it once this resolves. */
 export async function makePreview(jobId: string, lang: string, onProgress: (p: Progress) => void, signal: AbortSignal) {
   onProgress({ stage: "loading", fraction: 0 });
-  const job = await load(jobId, lang, true);
+  const job = await load(jobId, lang, true, signal);
   try {
-    const q = previewQuality(job.source.width, job.source.height);
+    const q = previewQuality(job.width, job.height);
     const encoder = await findEncoder(q, ["avc"]); // H.264: plays in every browser
     if (!encoder) throw new Error(UNSUPPORTED);
     const target = new BufferTarget(); // small enough for memory; "in-memory" puts the index first, so it streams
@@ -87,7 +109,7 @@ const speeds = new Map<string, Promise<Partial<Record<QualityId, number>>>>();
 export async function measureChoices(jobId: string, lang: string): Promise<{ choices: Choice[]; pick: QualityId }> {
   const job = await load(jobId, lang, false);
   try {
-    const options = qualityOptions(job.source.width, job.source.height);
+    const options = qualityOptions(job.width, job.height);
     const encoders = await Promise.all(options.map((q) => findEncoder(q)));
     const usable = options.flatMap((quality, i) => (encoders[i] ? [{ quality, encoder: encoders[i]! }] : []));
     if (!usable.length) throw new Error(UNSUPPORTED);
@@ -114,10 +136,9 @@ export async function measureChoices(jobId: string, lang: string): Promise<{ cho
 export async function renderDownload(jobId: string, lang: string, choice: Choice, save: SaveTarget,
                                      onProgress: (p: Progress) => void, signal: AbortSignal) {
   onProgress({ stage: "loading", fraction: 0 });
-  await cleanUpTemporaryFiles();
   let job: Loaded | null = null;
   try {
-    job = await load(jobId, lang, true);
+    job = await load(jobId, lang, true, signal);
     await renderPlan({
       source: job.source, plan: job.plan, voice: job.voice!, encoder: choice.encoder, target: save.target,
       fastStart: false, signal, beforeFinalize: save.allowCommit,

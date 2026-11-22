@@ -23,7 +23,10 @@ type PickerWindow = Window & {
 
 const TEMP_PREFIX = "render-";
 
-/** Remove temporary files left behind by an earlier render that was interrupted. */
+/**
+ * Remove temporary files left in private storage by earlier renders: finished ones (kept until now so their
+ * download could finish) and interrupted ones. A file another tab is still writing is locked and stays.
+ */
 export async function cleanUpTemporaryFiles() {
   try {
     const root = await navigator.storage.getDirectory();
@@ -85,6 +88,8 @@ export async function chooseSaveTarget(filename: string): Promise<SaveTarget | n
   }
 
   try {
+    // first, so it can't touch the file this render writes
+    await cleanUpTemporaryFiles();
     const root = await navigator.storage.getDirectory();
     const name = `${TEMP_PREFIX}${Date.now()}.mp4`;
     const handle = await root.getFileHandle(name, { create: true });

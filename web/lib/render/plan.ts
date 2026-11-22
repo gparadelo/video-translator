@@ -32,5 +32,31 @@ export function parsePlan(json: unknown): RenderPlan {
     sum += s.frames;
   }
   if (sum !== p.total_frames) throw new Error("the plan's clips don't add up to its length");
+  const { width, height } = p.source ?? {};
+  if (!(Number.isInteger(width) && width! > 0 && Number.isInteger(height) && height! > 0)) throw new Error("the plan has no video size");
+  if (!(p.voice && p.voice.sample_rate > 0 && p.voice.channels > 0)) throw new Error("the plan doesn't describe its voice track");
   return p as RenderPlan;
+}
+
+/**
+ * The size to render at, before rounding to even numbers: the source's size as the worker's ffmpeg sees it
+ * (plan.source), like the CLI render. `displayW` x `displayH` is the size this browser shows the source at;
+ * when its shape disagrees with the plan's (portrait here, landscape there), the rotation was read
+ * differently, and the video would come out sideways or squashed.
+ */
+export function sourceSize(plan: RenderPlan, displayW: number, displayH: number): [number, number] {
+  const { width, height } = plan.source;
+  const shape = (w: number, h: number) => Math.sign(w - h);
+  if (shape(width, height) * shape(displayW, displayH) < 0)
+    throw new Error("this browser reads the video's rotation differently from the worker Mac, so it can't make this video");
+  return [width, height];
+}
+
+/** Check the voice track fits the plan: the format it was made in, and as long as the video (within a frame). */
+export function checkVoice(plan: RenderPlan, voice: { sampleRate: number; channels: number; frames: number }) {
+  if (voice.sampleRate !== plan.voice.sample_rate || voice.channels !== plan.voice.channels)
+    throw new Error(`the voice track is ${voice.sampleRate} Hz with ${voice.channels} channels, not what the plan says`);
+  const want = (plan.total_frames / plan.fps) * voice.sampleRate;
+  if (Math.abs(voice.frames - want) > voice.sampleRate / plan.fps)
+    throw new Error("the voice track isn't as long as the video: translate this language again");
 }

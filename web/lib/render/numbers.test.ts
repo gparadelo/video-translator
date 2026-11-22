@@ -38,5 +38,12 @@ describe("ffmpeg's rational helpers", () => {
     expect(ffmpegRate(24000 / 1001)).toEqual({ num: 24000, den: 1001 });
     expect(ffmpegRate(60000 / 1001)).toEqual({ num: 60000, den: 1001 });
     expect(ffmpegRate(120)).toEqual({ num: 120, den: 1 });
+    // what ffmpeg's fps filter reports for these (checked with ffmpeg 9)
+    expect(ffmpegRate(23.976)).toEqual({ num: 2997, den: 125 });
+    expect(ffmpegRate(59.94)).toEqual({ num: 2997, den: 50 });
+    expect(ffmpegRate(32)).toEqual({ num: 32, den: 1 });
+    expect(ffmpegRate(64)).toEqual({ num: 64, den: 1 });
+    expect(ffmpegRate(12.5)).toEqual({ num: 25, den: 2 });
+    expect(ffmpegRate(0.5)).toEqual({ num: 1, den: 2 });
   });
 });

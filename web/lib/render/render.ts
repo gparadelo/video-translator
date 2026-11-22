@@ -213,8 +213,11 @@ export async function renderPlan(job: RenderJob): Promise<{ frames: number; enco
         timestamp: t,
         duration: frameDur,
       });
-      await video.add(sample);
-      sample.close();
+      try {
+        await video.add(sample);
+      } finally {
+        sample.close();
+      }
       index++;
       if (index % 8 === 0 || index === total) job.onProgress?.({ done: index, total });
       if (index % 30 === 0) await feedAudio(frameTime(index, rate) + 1);
@@ -232,9 +235,14 @@ export async function renderPlan(job: RenderJob): Promise<{ frames: number; enco
       const win = sourceWindow(timing);
       let held: VideoSample | null = null;
       try {
-        // a little before the seek point (rounding) and after the window; the selector decides exactly
-        for await (const sample of sink.samples(Math.max(0, win.start - 0.002), win.end + 0.05)) {
-          checkAborted(signal);
+        // A little before the seek point (rounding), and well after the window: the window is counted from the
+        // seek point, but a clip ends `durTicks` after its first kept frame, which can be a long frame gap later
+        // (low or variable frame rates). The selector decides exactly; decoding stops at the first frame past it.
+        for await (const sample of sink.samples(Math.max(0, win.start - 0.002), win.end + 1)) {
+          if (signal?.aborted) {
+            sample.close();
+            checkAborted(signal);
+          }
           const step = sel.offer(Math.round(sample.timestamp * source.timescale));
           if (step.kind === "before") {
             sample.close();

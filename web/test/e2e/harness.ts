@@ -2,7 +2,7 @@
 // reading the source with range requests from the test server, and posts the MP4 back to it.
 
 import { BufferTarget, StreamTarget, type Target } from "mediabunny";
-import { parsePlan } from "../../lib/render/plan";
+import { checkVoice, parsePlan, sourceSize } from "../../lib/render/plan";
 import { previewQuality, qualityOptions, type QualityId } from "../../lib/render/quality";
 import { canEncodeVoice, findEncoder, measureSpeed, missingApis, openSource, renderPlan } from "../../lib/render/render";
 import { chooseSaveTarget, cleanUpTemporaryFiles } from "../../lib/render/save";
@@ -34,8 +34,10 @@ async function run(mode: Mode) {
   const voice = parseWav(await (await fetch("/files/voice.wav")).arrayBuffer());
   const source = await openSource(new URL("/files/source.mp4", location.href).href);
   try {
-    const q = mode === "preview" ? previewQuality(source.width, source.height) : qualityOptions(source.width, source.height).find((o) => o.id === mode);
-    if (!q) throw new Error(`no ${mode} option for ${source.width}x${source.height}`);
+    const [w, h] = sourceSize(plan, source.width, source.height);
+    checkVoice(plan, voice);
+    const q = mode === "preview" ? previewQuality(w, h) : qualityOptions(w, h).find((o) => o.id === mode);
+    if (!q) throw new Error(`no ${mode} option for ${w}x${h}`);
     const encoder = await findEncoder(q, mode === "preview" ? ["avc"] : undefined);
     if (!encoder) throw new Error(`no encoder for ${mode}`);
     const speed = await measureSpeed(source, [encoder], 0.5);
@@ -63,7 +65,7 @@ async function run(mode: Mode) {
     const out = bytes();
     await fetch(`/save/${mode}.mp4`, { method: "POST", body: out });
     return {
-      mode, ...r, ms, bytes: out.length, encoder, size: [source.width, source.height], progressCalls,
+      mode, ...r, ms, bytes: out.length, encoder, size: [w, h], progressCalls,
       estimatedMs: speed[0] * plan.total_frames * 1000, peakHeapMB: Math.max(0, ...heap) / 1e6,
     };
   } finally {
@@ -89,7 +91,7 @@ async function runSave(stopAfterMs?: number) {
   };
   try {
     await cleanUpTemporaryFiles();
-    const encoder = (await findEncoder(qualityOptions(source.width, source.height)[0]))!;
+    const encoder = (await findEncoder(qualityOptions(...sourceSize(plan, source.width, source.height))[0]))!;
     const save = (await chooseSaveTarget("e2e.mp4"))!;
     const ac = new AbortController();
     if (stopAfterMs) setTimeout(() => ac.abort(), stopAfterMs);
