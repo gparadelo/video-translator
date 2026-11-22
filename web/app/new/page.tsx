@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
 import { TitleLanguage } from "@/components/Titles";
@@ -34,6 +34,7 @@ export default function NewProject() {
   const [error, setError] = useState("");
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [check, setCheck] = useState<Check | "checking" | null>(null);
+  const picked = useRef<File | null>(null);
 
   // Start with the languages saved on the person's profile.
   useEffect(() => {
@@ -48,14 +49,12 @@ export default function NewProject() {
   }, []);
 
   async function pick(f: File | null) {
+    picked.current = f;
     setFile(f);
     setCheck(f ? "checking" : null);
     if (!f) return;
     const c = await checkVideo(f).catch((e) => ({ ok: false as const, reason: `This video couldn't be checked: ${(e as Error).message}`, facts: null }));
-    setFile((cur) => {
-      if (cur === f) setCheck(c);
-      return cur;
-    });
+    if (picked.current === f) setCheck(c); // not when another file was picked meanwhile
   }
 
   // The name defaults to the video's file name, else the title.

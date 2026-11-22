@@ -14,6 +14,8 @@ const kept = new Map<string, Kept>();
 
 export const keepFile = (jobId: string, file: File) => void kept.set(jobId, { file });
 export const keptFile = (jobId: string): File | null => kept.get(jobId)?.file ?? null;
+/** Once the video is prepared: drop it and what was measured of it (the voiceover's sound, a few MB). */
+export const forgetFile = (jobId: string) => void kept.delete(jobId);
 
 function task<T>(run: (progress: (f: number) => void) => Promise<T>): Task<T> {
   const t: Task<T> = { promise: Promise.resolve() as Promise<T>, progress: 0, listeners: new Set() };

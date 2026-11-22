@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Bar, Button, Card, Notice } from "@/components/ui";
 import type { Job } from "@/lib/jobs";
 import { browserProblem, onPhone } from "@/lib/prepare/checks";
-import { measureKept, keptFile } from "@/lib/prepare/files";
+import { forgetFile, keptFile, measureKept } from "@/lib/prepare/files";
 import { prepareJob, type PrepareProgress } from "@/lib/prepare/run";
 import { RunGone, RunTaken, type Waiting } from "@/lib/produce/run";
 import { useRenderGuard } from "@/lib/render/guard";
@@ -84,11 +84,12 @@ export function PrepareOutput({ job, onChanged }: { job: Job; onChanged: () => P
       const run = new AbortController();
       const off = () => run.abort();
       ac.signal.addEventListener("abort", off, { once: true });
-      let lost = false;
+      // "gone": the project moved on (canceled, or the last step just finished it); "taken": another browser has it
+      let lost: "taken" | "gone" | null = null;
       const beat = setInterval(async () => {
         const h = await hold();
         if (h === "taken" || h === "gone") {
-          lost = true;
+          lost = h;
           run.abort();
         }
       }, HOLD_EVERY);
@@ -103,16 +104,17 @@ export function PrepareOutput({ job, onChanged }: { job: Job; onChanged: () => P
           onProgress: (p) => !stop() && setProgress(p),
           onWaiting: (w) => !stop() && setWaiting(w),
         });
+        forgetFile(job.id); // measured and saved: the tab doesn't need to keep the video any more
         if (!stop()) await onChanged();
       } catch (e) {
         if (stop()) return;
-        if (e instanceof RunTaken || lost) {
+        if (e instanceof RunGone || lost === "gone") return void (await onChanged());
+        if (e instanceof RunTaken || lost === "taken") {
           setElsewhere("browser");
           await onChanged();
           return again(LOOK_AGAIN);
         }
         if ((e as Error).name === "AbortError") return;
-        if (e instanceof RunGone) return void (await onChanged());
         const msg = (e as Error).message || "something went wrong";
         // the project fails with the reason; Try again (retry_job) carries on from what was made
         const { error: f } = await supabase.rpc("fail_prepare", { p_job: job.id, p_error: msg });
