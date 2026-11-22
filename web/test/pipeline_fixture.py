@@ -66,20 +66,24 @@ def tone_clip(path: Path, spans: list[tuple[float, float]], dur: float, freq: fl
                     "-ac", "1", "-c:a", "libmp3lame", "-b:a", "128k", str(path)], check=True)
 
 
-def make_case(d: Path, rnd: random.Random, kind: str) -> dict:
+def make_case(d: Path, rnd: random.Random, kind: str, video: tuple[float, float] | None = None,
+              fit_over: dict | None = None) -> dict:
+    """One fake job in `d`. With `video` (its length and frame rate), d/source.mp4 is already a real video and
+    the speech has to fit inside it; otherwise source.mp4 is an empty stand-in."""
     d.mkdir(parents=True, exist_ok=True)
-    (d / "source.mp4").write_bytes(b"")  # vt.job_paths wants a video; plan_inputs' size comes from SOURCE
+    if not video:
+        (d / "source.mp4").write_bytes(b"")  # vt.job_paths wants a video; plan_inputs' size comes from SOURCE
     work = d / "work"
     lang = "xx"
     tts = work / lang / "tts"
     tts.mkdir(parents=True, exist_ok=True)
 
     # the original: beats of words with times
-    nbeats = rnd.randint(2, 6)
+    nbeats = rnd.randint(2, 6) if not video else 3
     t = rnd.uniform(0.2, 1.2)
     tokens, beats = [], []
     for bi in range(nbeats):
-        nw = rnd.randint(2, 9)
+        nw = rnd.randint(2, 9) if not video else 5
         idx0 = len(tokens)
         for _ in range(nw):
             w = rnd.choice(WORDS)
@@ -95,6 +99,10 @@ def make_case(d: Path, rnd: random.Random, kind: str) -> dict:
     s0, s1 = tokens[0]["start"], tokens[-1]["end"]
     vid_dur = round(s1 + rnd.uniform(0.3, 2.5), 3)
     fps = rnd.choice([30.0, 25.0, 30000 / 1001, 24.0, 60.0])
+    if video:
+        vid_dur, fps = video
+        if s1 > vid_dur - 0.5:
+            raise ValueError("the speech doesn't fit the video")
     ncuts = rnd.randint(2, 9)
     cuts = sorted({round(rnd.uniform(0.1, vid_dur - 0.1) * fps) / fps for _ in range(ncuts)})
     if kind == "lead_tail":
@@ -168,6 +176,7 @@ def make_case(d: Path, rnd: random.Random, kind: str) -> dict:
     elif kind == "loose":
         fit = {"video_speed_min": 0.8, "video_speed_max": 1.25, "trim_keep_min": 0.2, "audio_tempo_min": 0.9,
                "audio_tempo_max": 1.12, "sync_tolerance": 0.35, "pause_max_extra": 0.8}
+    fit.update(fit_over or {})
     lines = ['[elevenlabs]', 'voice_id = "test-voice"']
     if fit:
         lines += ["[fit]"] + [f"{k} = {v}" for k, v in fit.items()]
@@ -179,7 +188,7 @@ def make_case(d: Path, rnd: random.Random, kind: str) -> dict:
     (work / lang / "plan.json").write_text(json.dumps(plan, indent=1))
     report = vt.write_report(P, plan)
     portable = work / lang / "plan_web.json"
-    portable.write_text(json.dumps(vt.portable_plan(plan, SOURCE), indent=1))
+    portable.write_text(json.dumps(vt.portable_plan(plan, vt.video_size(Path(A["video"]["path"]))), indent=1))
     voice = vt.build_voice_track(P, A, plan)
     inputs, files = vt.plan_inputs(P, A, lang, cfg)
     ip = work / lang / "inputs.json"
@@ -190,6 +199,36 @@ def make_case(d: Path, rnd: random.Random, kind: str) -> dict:
             "flags": len(plan["flags"]), "tempos": sorted({b["tempo"] for b in plan["beats"]}),
             "trimmed": sum(1 for s in plan["segments"] if s["trimmed"] > 0.02),
             "speeds": [min(s["speed"] for s in plan["segments"]), max(s["speed"] for s in plan["segments"])]}
+
+
+def make_e2e(d: Path, rate: str, size: tuple[int, int]) -> dict:
+    """For test/e2e: a real 12 s video and two jobs on it, each also rendered with the CLI (vt.cmd_render) as the
+    reference. "flat": every tempo 1, so the browser's whole render must match the CLI's, frames and voice;
+    "stretched": some beat's tempo isn't 1 (WSOLA vs atempo: the voice is compared beat by beat)."""
+    from vt_fixture import fps_of, make_video
+    vt.set_reporter(lambda event: None)  # stdout is for the JSON
+    d.mkdir(parents=True, exist_ok=True)
+    src = d / "source.mp4"
+    make_video(src, rate, 12, None, size)
+    fps = fps_of(src)
+    out = {}
+    for name, fit, stretched in (("flat", {"audio_tempo_min": 1.0, "audio_tempo_max": 1.0}, False),
+                                 ("stretched", {}, True)):
+        for seed in range(300):
+            job = d / f"{name}{seed}"
+            job.mkdir()
+            (job / "source.mp4").symlink_to(src)
+            try:
+                c = make_case(job, random.Random(seed), "long" if stretched else "plain", (12.0, fps), fit)
+            except ValueError:
+                continue
+            if any(t != 1.0 for t in c["tempos"]) == stretched:
+                vt.cmd_render(argparse.Namespace(job=str(job), lang="xx"))
+                out[name] = {**c, "source": str(src), "reference": str(job / "out" / f"{job.name}_xx.mp4")}
+                break
+        else:
+            raise SystemExit(f"no seed gives a {name} case")
+    return out
 
 
 KINDS = ("plain", "long", "short", "dropped", "reordered", "lead_tail", "misaligned", "tight", "loose")
@@ -204,16 +243,21 @@ def lufs3(path: str) -> float | None:
 
 
 def main():
-    vt.video_size = lambda path: SOURCE  # the fixtures have no real video
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("cases"); p.add_argument("out"); p.add_argument("--count", type=int, default=len(KINDS) * 2)
     p.add_argument("--seed", type=int, default=1)
+    p = sub.add_parser("e2e"); p.add_argument("dir"); p.add_argument("--rate", default="30")
+    p.add_argument("--size", default="1080x1920")
     p = sub.add_parser("lufs"); p.add_argument("files", nargs="+")
     p = sub.add_parser("atempo"); p.add_argument("input"); p.add_argument("tempo", type=float); p.add_argument("output")
     p = sub.add_parser("limiter"); p.add_argument("input"); p.add_argument("output")
     a = ap.parse_args()
-    if a.cmd == "cases":
+    if a.cmd != "e2e":
+        vt.video_size = lambda path: SOURCE  # these fixtures have no real video
+    if a.cmd == "e2e":
+        print(json.dumps(make_e2e(Path(a.dir), a.rate, tuple(int(x) for x in a.size.split("x")))))
+    elif a.cmd == "cases":
         out = Path(a.out)
         cases = [make_case(out / f"case{i:02d}", random.Random(a.seed * 1000 + i), KINDS[i % len(KINDS)])
                  for i in range(a.count)]

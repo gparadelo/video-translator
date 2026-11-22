@@ -1,14 +1,44 @@
-// Runs in a real browser (test/e2e/run.mjs): renders the fixture job with the same code the job page uses,
-// reading the source with range requests from the test server, and posts the MP4 back to it.
+// Runs in a real browser (test/e2e/run.mjs) with the same code the job page uses: builds the fixture jobs' timing
+// plans and voice tracks from their plan inputs (lib/pipeline, the clips decoded by this browser), renders the
+// "flat" job from what it built, reading the source with range requests from the test server, and posts
+// everything back to it.
 
 import { BufferTarget, StreamTarget, type Target } from "mediabunny";
-import { checkVoice, parsePlan, sourceSize } from "../../lib/render/plan";
+import { buildLanguage } from "../../lib/pipeline/build";
+import { metaFile, parseClipMeta, parseInputs } from "../../lib/pipeline/inputs";
+import { decodeMp3 } from "../../lib/pipeline/run";
+import { checkVoice, parsePlan, sourceSize, type RenderPlan } from "../../lib/render/plan";
 import { previewQuality, qualityOptions, type QualityId } from "../../lib/render/quality";
 import { canEncodeVoice, findEncoder, measureSpeed, missingApis, openSource, renderPlan } from "../../lib/render/render";
 import { chooseSaveTarget, cleanUpTemporaryFiles } from "../../lib/render/save";
-import { parseWav } from "../../lib/render/wav";
+import { parseWav, type Pcm } from "../../lib/render/wav";
 
 type Mode = "preview" | QualityId;
+
+const built = new Map<string, { plan: RenderPlan; voice: Pcm }>();
+
+/** Plan inputs -> plan.json + voice.wav, as lib/pipeline/run.ts does it (without the API routes). */
+async function build(name: string) {
+  const t0 = performance.now();
+  const inputs = parseInputs(await (await fetch(`/files/${name}/inputs.json`)).json());
+  const clips = await Promise.all(inputs.clips.map(async (c) => {
+    const meta = parseClipMeta(await (await fetch(`/files/${name}/tts/${metaFile(c.file)}`)).json(), c.file);
+    const decoded = await decodeMp3(await (await fetch(`/files/${name}/tts/${c.file}`)).arrayBuffer());
+    return { meta, ...decoded };
+  }));
+  const b = buildLanguage(inputs, clips);
+  const planJson = JSON.stringify(b.portable, null, 1);
+  await fetch(`/save/${name}-plan.json`, { method: "POST", body: planJson });
+  await fetch(`/save/${name}-voice.wav`, { method: "POST", body: b.voice });
+  built.set(name, { plan: parsePlan(JSON.parse(planJson)), voice: parseWav(b.voice) });
+  return { ms: performance.now() - t0, seconds: b.seconds };
+}
+
+function flat() {
+  const b = built.get("flat");
+  if (!b) throw new Error("build the flat job first");
+  return b;
+}
 
 /** A target like a file on disk: positioned writes (moov at the end), collected here and posted as one file. */
 function fileLikeTarget() {
@@ -30,8 +60,7 @@ async function run(mode: Mode) {
   const missing = missingApis();
   if (missing) throw new Error(`missing ${missing}`);
   if (!(await canEncodeVoice())) throw new Error("no AAC encoder");
-  const plan = parsePlan(await (await fetch("/files/plan.json")).json());
-  const voice = parseWav(await (await fetch("/files/voice.wav")).arrayBuffer());
+  const { plan, voice } = flat();
   const source = await openSource(new URL("/files/source.mp4", location.href).href);
   try {
     const [w, h] = sourceSize(plan, source.width, source.height);
@@ -80,8 +109,7 @@ async function run(mode: Mode) {
  */
 async function runSave(stopAfterMs?: number) {
   delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
-  const plan = parsePlan(await (await fetch("/files/plan.json")).json());
-  const voice = parseWav(await (await fetch("/files/voice.wav")).arrayBuffer());
+  const { plan, voice } = flat();
   const source = await openSource(new URL("/files/source.mp4", location.href).href);
   const leftovers = async () => {
     const names: string[] = [];
@@ -110,5 +138,5 @@ async function runSave(stopAfterMs?: number) {
   }
 }
 
-Object.assign(window, { runE2E: run, runSave });
+Object.assign(window, { runBuild: build, runE2E: run, runSave });
 document.title = "ready";

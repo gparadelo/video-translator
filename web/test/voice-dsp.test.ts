@@ -61,7 +61,7 @@ describe.skipIf(!ready)("loudness meter vs ffmpeg ebur128", () => {
       const file = join(dir, "lufs.wav");
       writeFileSync(file, Buffer.from(encodeWav(pcm, SR, 1)));
       const out = execFileSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-af",
-        "ebur128=metadata=1,ametadata=print:key=lavfi.r128.I:file=-", "-f", "null", "-"], { encoding: "utf8" });
+        "ebur128=metadata=1,ametadata=print:key=lavfi.r128.I:file=-", "-f", "null", "-"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
       const want = Number([...out.matchAll(/lavfi\.r128\.I=(-?[\d.]+)/g)].at(-1)![1]);
       const x = Float64Array.from(pcm, (v) => v / 32768);
       expect(Math.abs(integratedLoudness(x, SR) - want)).toBeLessThan(0.002); // ffmpeg prints 3 decimals
