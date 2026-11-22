@@ -29,6 +29,23 @@ the browser. A project's title is translated with the person's own Claude key
 (`app/api/jobs/[id]/title/route.ts`, `lib/translate-title.ts`) into the project's languages as plain
 ASCII titles of at most 60 characters. A project has a video, a title, or both.
 
+## Rendering in the browser
+
+The worker on the Mac makes each language's timing plan and voice track; the video is rendered on the job
+page, in the person's browser (`lib/render`, WebCodecs + [Mediabunny](https://mediabunny.dev)). The source
+is read from R2 in pieces, one decoded frame is held at a time, and each clip gets exactly the frames
+`scripts/vt.py`'s ffmpeg command would give it (`lib/render/frames.ts`). The page first makes a 720p preview
+(uploaded, so it plays on the page), then the full quality on Download (saved on the computer). Desktop
+Chrome and Edge work best; other browsers are told so. Files and formats: "Files in storage" in
+[docs/web-setup.md](../docs/web-setup.md).
+
+## Tests
+
+```bash
+pnpm test   # unit tests + frame selection checked against ffmpeg (needs ffmpeg and uv)
+pnpm e2e    # renders a fake job in headless Chrome and compares it with the CLI render
+```
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

@@ -11,6 +11,8 @@ Test fixtures made with ffmpeg and scripts/vt.py itself (no API calls). Used by 
       A whole fake job: source.mp4, work/analysis.json, fake "TTS" clips, work/xx/plan.json, then the worker's
       outputs plan_web.json + voice.wav (vt.build_voice_track / vt.portable_plan). --render also renders it with
       the CLI (vt.cmd_render) as a reference.
+  ... vt_fixture.py codes VIDEO  /  compare VIDEO REFERENCE
+      The frame numbers in a video, or how a (browser) render compares with the CLI's: frames, size, voice.
 """
 from __future__ import annotations
 
