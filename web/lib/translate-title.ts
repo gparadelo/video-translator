@@ -1,10 +1,11 @@
 // Server only: runs on the person's own Claude API key (Settings). Called from /api/jobs/<id>/title.
 import Anthropic from "@anthropic-ai/sdk";
 import { LANGS, langName } from "@/lib/jobs";
+import { CLAUDE } from "@/lib/produce/config";
 import { cleanTitle, MAX_TITLE, NON_LATIN, shorten, toAscii } from "@/lib/titles";
 
-// Same model the pipeline uses (config.default.toml -> [claude] model).
-const MODEL = "claude-opus-5-5";
+// Same model the translations use (config.default.toml -> [claude] model).
+const MODEL = CLAUDE.model;
 const CODES = Object.keys(LANGS);
 
 const SYSTEM = `You translate short video titles (social media / YouTube product videos) into other languages.
