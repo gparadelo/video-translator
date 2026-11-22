@@ -32,19 +32,31 @@ export function unseal(sealed: string, userId: string, name: KeyName): string {
   return Buffer.concat([d.update(raw.subarray(12, raw.length - 16)), d.final()]).toString("utf8");
 }
 
-/** The signed-in person's saved keys, decrypted (null where none is saved or it can't be read). */
+/**
+ * The signed-in person's saved keys, decrypted (null where none is saved). Throws when SECRETS_KEY is
+ * missing, or when a saved key can't be opened (wrong SECRETS_KEY, or a key saved some other way).
+ */
 export async function myKeys(supabase: SupabaseClient, userId: string): Promise<Record<KeyName, string | null>> {
-  const { data: rows } = await supabase.rpc("my_keys");
+  masterKey(); // a server setup problem, not the person's: let it say so
+  const { data: rows, error } = await supabase.rpc("my_keys");
+  if (error) throw new Error(`couldn't read your saved keys: ${error.message}`);
   const data = (rows as { elevenlabs_key: string | null; anthropic_key: string | null }[] | null)?.[0];
   const open = (sealed: string | null | undefined, name: KeyName) => {
     if (!sealed) return null;
     try {
       return unseal(sealed, userId, name);
     } catch {
-      return null;
+      throw new UnreadableKey(name);
     }
   };
   return { elevenlabs: open(data?.elevenlabs_key, "elevenlabs"), anthropic: open(data?.anthropic_key, "anthropic") };
+}
+
+/** A saved key that can't be opened: the person should save it again in Settings. */
+export class UnreadableKey extends Error {
+  constructor(public key: KeyName) {
+    super(`your saved ${key === "elevenlabs" ? "ElevenLabs" : "Claude"} API key can't be read - save it again in Settings`);
+  }
 }
 
 /** Last 4 characters, shown in Settings as "•••• abcd". */

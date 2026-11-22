@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { fail } from "@/lib/api";
 import { LANGS } from "@/lib/jobs";
-import { myKeys } from "@/lib/secrets";
+import { myKeys, UnreadableKey } from "@/lib/secrets";
 import { getUser } from "@/lib/supabase/server";
 import { TitleError, translateTitle } from "@/lib/translate-title";
 
@@ -51,6 +51,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[i
     return NextResponse.json({ job: data });
   } catch (err) {
     if (err instanceof TitleError) return fail(err.status, err.message);
+    if (err instanceof UnreadableKey) return fail(409, err.message);
     return fail(500, (err as Error).message);
   }
 }

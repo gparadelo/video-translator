@@ -584,6 +584,9 @@ def claude_json(cfg, system: str, schema: dict, messages: list[dict]) -> tuple[d
 
     C = cfg.get("claude", {})
     model = C.get("model", "claude-opus-5-5")
+    if not _job_keys.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        die("ANTHROPIC_API_KEY is not set - put it in the .env file in your jobs folder (see .env.example). "
+            "Create one at platform.claude.com -> API keys.")
     client = anthropic.Anthropic(api_key=env("ANTHROPIC_API_KEY"))
     try:
         r = client.beta.messages.create(

@@ -59,12 +59,13 @@ language sql stable security definer set search_path = '' as $$
 $$;
 
 -- The voice: one for every language, and optionally a different one per language ({"de": "..."}).
-create function public.set_my_voice(p_voice_id text, p_voice_ids jsonb default '{}'::jsonb) returns void
+-- null = keep what's saved; '' (voice) or {} (per language) = clear it.
+create function public.set_my_voice(p_voice_id text default null, p_voice_ids jsonb default null) returns void
 language plpgsql security definer set search_path = '' as $$
 declare k text; v jsonb;
 begin
   if auth.uid() is null then raise exception 'sign in first'; end if;
-  if p_voice_id is not null and p_voice_id !~ '^[A-Za-z0-9]{10,40}$' then
+  if coalesce(p_voice_id, '') <> '' and p_voice_id !~ '^[A-Za-z0-9]{10,40}$' then
     raise exception 'that does not look like an ElevenLabs voice ID';
   end if;
   if jsonb_typeof(coalesce(p_voice_ids, '{}'::jsonb)) <> 'object' then raise exception 'voice_ids must be an object'; end if;
@@ -73,7 +74,9 @@ begin
       raise exception 'voice for "%" does not look like an ElevenLabs voice ID', k;
     end if;
   end loop;
-  update public.profiles set voice_id = nullif(p_voice_id, ''), voice_ids = coalesce(p_voice_ids, '{}'::jsonb)
+  update public.profiles
+     set voice_id  = case when p_voice_id is null then voice_id else nullif(p_voice_id, '') end,
+         voice_ids = coalesce(p_voice_ids, voice_ids)
    where id = auth.uid();
 end $$;
 

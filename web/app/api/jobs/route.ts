@@ -35,7 +35,12 @@ export async function POST(request: NextRequest) {
     return fail(400, "choose at least one language (2-letter codes)");
 
   // Projects run on the person's own keys and voice: don't start one that can't finish.
-  const missing = missingFor(toStatus((await supabase.rpc("my_key_status")).data), { video: hasVideo, title: Boolean(title) });
+  const { data: profile } = await supabase.from("profiles").select("approved").maybeSingle();
+  if (!profile?.approved) return fail(403, "your account isn't approved yet");
+  const { data: setupRows, error: setupError } = await supabase.rpc("my_key_status");
+  const setup = toStatus(setupRows);
+  if (setupError || !setup) return fail(500, "couldn't check your Settings - try again");
+  const missing = missingFor(setup, { video: hasVideo, title: Boolean(title) });
   if (missing.length) return fail(409, `first add ${listOf(missing)} in Settings`);
 
   const { data: job, error } = await supabase

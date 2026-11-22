@@ -255,19 +255,14 @@ class Job:
             say(f"  downloading the video ({(self.row.get('source_bytes') or 0) / 1e6:.0f} MB)...")
             self.store.download(self.row["source_key"], dest, self.transfer("download"))
             self.beat.check()
-        # per-job settings for vt.py: this person's languages and voice
-        prof = self.db.profile(self.row["user_id"])
-        langs = [l for l in self.row.get("languages") or [] if l != self.row.get("base_lang")]
-        if not prof.get("voice_id") and not all((prof.get("voice_ids") or {}).get(l) for l in langs):
-            raise vt.VTError("choose your ElevenLabs voice in Settings, then try again")
-        lines = [f"languages = {json.dumps(self.row.get('languages') or [])}"]
-        voices = {k: v for k, v in (prof.get("voice_ids") or {}).items() if v}
-        if prof.get("voice_id") or voices:
-            lines.append("[elevenlabs]")
-            if prof.get("voice_id"):
-                lines.append(f"voice_id = {json.dumps(prof['voice_id'])}")
-            if voices:
-                lines.append("voice_ids = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in voices.items()) + " }")
+        # Per-job settings for vt.py: this person's languages and voice. Every language gets its voice spelled
+        # out, so nothing in a config.toml in the worker's folder (merged under job.toml) can pick another voice.
+        langs = self.row.get("languages") or []
+        per_lang = self.prof.get("voice_ids") or {}
+        voices = {l: per_lang.get(l) or self.prof["voice_id"] for l in langs}
+        lines = [f"languages = {json.dumps(langs)}", "[elevenlabs]",
+                 f"voice_id = {json.dumps(self.prof['voice_id'])}",
+                 "voice_ids = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in voices.items()) + " }"]
         (self.dir / "job.toml").write_text("\n".join(lines) + "\n")
 
     def use_owner_keys(self):
@@ -284,6 +279,9 @@ class Job:
             raise vt.VTError("add your ElevenLabs API key in Settings, then try again")
         if not claude:
             raise vt.VTError("add your Claude API key in Settings, then try again")
+        self.prof = self.db.profile(uid)  # checked here, before downloading the video
+        if not self.prof.get("voice_id"):
+            raise vt.VTError("choose your ElevenLabs voice in Settings, then try again")
         vt.use_keys(ELEVENLABS_API_KEY=eleven, ANTHROPIC_API_KEY=claude)
 
     # --- the two halves ---------------------------------------------------------------------

@@ -78,6 +78,17 @@ Things to know:
   is marked failed.
 - One language failing doesn't stop the others: it is marked failed with the reason, and the job finishes.
 
+## Upgrading an existing setup to per-person keys
+Do it in this order. Vercel only applies new settings to new deployments, and a new worker against an old
+database fails every job.
+1. Set `SECRETS_KEY` in Vercel (Settings -> Environment Variables).
+2. Run the new migration (`supabase/migrations/20261122000000_user_keys.sql`).
+3. Merge and deploy, or redeploy if the code is already there. Then remove `ANTHROPIC_API_KEY` from Vercel.
+4. On the Mac, straight away: `git pull`, put the same `SECRETS_KEY` in `worker/.env`, remove the ElevenLabs
+   and Claude keys from it, and restart the worker (`worker/install-service.sh`, or Ctrl-C and start it again).
+   Until it restarts, the old worker still has your keys in memory and every job is billed to you.
+5. Everyone, you included, opens Settings and saves their keys and voice.
+
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.
 2. `POST /api/jobs/<id>/submit` checks the upload arrived and queues the job.
