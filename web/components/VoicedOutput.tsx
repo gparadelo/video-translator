@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Bar, Button, Card, Notice, Pill } from "@/components/ui";
 import { langName, type Job, type Output } from "@/lib/jobs";
 import { useRenderGuard } from "@/lib/render/guard";
@@ -44,13 +44,12 @@ export function VoicedOutput({ job, output: o, support, onSaved }: {
   const [progress, setProgress] = useState<BuildProgress | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const abort = useRef<AbortController | null>(null);
+  const [saved, setSaved] = useState(false); // until the page reloads and shows the render card
   useRenderGuard(progress !== null);
 
   useEffect(() => {
     if (support !== null) return;
     const ac = new AbortController();
-    abort.current = ac;
     oneAtATime(async () => {
       if (ac.signal.aborted) return;
       setError("");
@@ -61,13 +60,15 @@ export function VoicedOutput({ job, output: o, support, onSaved }: {
       await m.prepareVoice(job.id, o.lang, (p) => !ac.signal.aborted && setProgress(p), ac.signal);
     }).then(
       () => {
-        if (!ac.signal.aborted) void onSaved();
+        if (ac.signal.aborted) return;
+        setSaved(true);
+        void onSaved();
       },
       (e) => {
         if (ac.signal.aborted || (e as Error).name === "AbortError") return;
         const msg = (e as Error).message || "something went wrong";
-        // translated again meanwhile: the page shows the new run as soon as it reloads
-        if (/changed while/.test(msg)) void onSaved();
+        // translated again meanwhile, or another tab finished it: the page shows where it is now
+        if (/changed while|isn't waiting/.test(msg)) void onSaved();
         else setError(msg);
       },
     ).finally(() => {
@@ -98,7 +99,7 @@ export function VoicedOutput({ job, output: o, support, onSaved }: {
         </div>
       ) : (
         <p className="text-sm text-neutral-500">
-          {support === undefined ? "Checking this browser…" : support ?? "Waiting for the other languages…"}
+          {saved ? "Done. Loading the video…" : support === undefined ? "Checking this browser…" : support ?? "Waiting for the other languages…"}
         </p>
       )}
     </Card>
