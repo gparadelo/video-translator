@@ -269,10 +269,10 @@ function Review({ job, act }: { job: Job; act: Act }) {
 function Outputs({ job, outputs, refresh }: { job: Job; outputs: Output[]; refresh: () => Promise<void> }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
   const rendered = outputs.filter((o) => o.status === "done" && o.output_key);
-  const support = useBrowserSupport();
+  const anyReady = outputs.some((o) => o.status === "ready");
+  const support = useBrowserSupport(anyReady); // older projects don't need the render code
   const [busy, setBusy] = useState<string | null>(null); // the language rendering now: one at a time
   useRenderGuard(busy !== null);
-  const anyReady = outputs.some((o) => o.status === "ready");
   return (
     <>
     {rendered.length > 0 && <DownloadAll jobId={job.id} outputs={rendered} />}

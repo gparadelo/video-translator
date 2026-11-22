@@ -42,15 +42,22 @@ export function useRenderGuard(active: boolean) {
   }, [active]);
 }
 
-export type Running = { kind: "preview" | "download"; startedAt: number; fraction: number };
+/** `seenAt` is refreshed every HEARTBEAT ms while the render runs, so another open tab can tell it's alive. */
+export type Running = { kind: "preview" | "download"; startedAt: number; fraction: number; seenAt: number };
+
+export const HEARTBEAT = 3000;
 
 const key = (jobId: string, lang: string) => `vt-render:${jobId}:${lang}`;
 
-/** A render of this language that was running in a tab that's gone (closed, reloaded, crashed). */
-export function interruptedRender(jobId: string, lang: string): Running | null {
+/**
+ * A render of this language that was running in a tab that's gone (closed, reloaded, crashed). One still
+ * running in another tab doesn't count.
+ */
+export function interruptedRender(jobId: string, lang: string, now = Date.now()): Running | null {
   try {
     const raw = localStorage.getItem(key(jobId, lang));
-    return raw ? (JSON.parse(raw) as Running) : null;
+    const r = raw ? (JSON.parse(raw) as Running) : null;
+    return r && !(now - (r.seenAt ?? 0) < 3 * HEARTBEAT) ? r : null;
   } catch {
     return null;
   }

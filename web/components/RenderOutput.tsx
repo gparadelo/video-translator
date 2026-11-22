@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bar, Button, Card, Notice, Pill } from "@/components/ui";
 import { langName, type Job, type Output } from "@/lib/jobs";
-import { interruptedRender, saveRunning, type Running } from "@/lib/render/guard";
+import { HEARTBEAT, interruptedRender, saveRunning, type Running } from "@/lib/render/guard";
 import { durationText, qualityLabel, type QualityId } from "@/lib/render/quality";
 import type { Choice, Progress } from "@/lib/render/run";
 
@@ -17,23 +17,36 @@ let loading: Promise<RenderModules> | null = null;
 
 /** The render code is big (Mediabunny), so it loads only on pages that need it. */
 function loadRender() {
-  loading ??= Promise.all([import("@/lib/render/run"), import("@/lib/render/save")]).then(([run, save]) => (modules = { run, save }));
+  loading ??= Promise.all([import("@/lib/render/run"), import("@/lib/render/save")]).then(
+    ([run, save]) => (modules = { run, save }),
+    (e) => {
+      loading = null; // try again next time
+      throw e;
+    },
+  );
   return loading;
 }
 
-/** null when this browser can render, a message when it can't, undefined while checking. */
-export function useBrowserSupport() {
+/**
+ * null when this browser can render, a message when it can't, undefined while checking (or while `needed`
+ * is false: then nothing is loaded).
+ */
+export function useBrowserSupport(needed: boolean) {
   const [support, setSupport] = useState<string | null | undefined>(undefined);
   useEffect(() => {
+    if (!needed) return;
     let live = true;
     loadRender()
-      .then((m) => m.run.checkBrowser())
+      .then(
+        (m) => m.run.checkBrowser(),
+        () => "The video tools didn't load. Reload the page to try again.",
+      )
       .catch(() => "This browser can't make the videos. Use Chrome or Edge on a computer.")
       .then((s) => live && setSupport(s));
     return () => {
       live = false;
     };
-  }, []);
+  }, [needed]);
   return support;
 }
 
@@ -79,6 +92,9 @@ export function ReadyOutput({
   const supported = support === null;
   const canStart = supported && !task && !othersBusy;
 
+  // The card goes away when this language stops being ready (e.g. it's translated again): stop its render.
+  useEffect(() => () => abort.current?.abort(), []);
+
   async function run(kind: Running["kind"], work: (signal: AbortSignal, onProgress: (p: Progress) => void) => Promise<void>) {
     setError("");
     setSaved("");
@@ -87,22 +103,22 @@ export function ReadyOutput({
     const ac = new AbortController();
     abort.current = ac;
     const startedAt = Date.now();
-    let lastSave = 0;
-    saveRunning(job.id, o.lang, { kind, startedAt, fraction: 0 });
+    let fraction = 0;
+    const beat = () => saveRunning(job.id, o.lang, { kind, startedAt, fraction, seenAt: Date.now() });
+    beat();
+    const heartbeat = setInterval(beat, HEARTBEAT);
     setTask({ kind, progress: { stage: "loading", fraction: 0 } });
     try {
       await work(ac.signal, (progress) => {
-        setTask({ kind, progress });
-        if (Date.now() - lastSave > 2000) {
-          lastSave = Date.now();
-          saveRunning(job.id, o.lang, { kind, startedAt, fraction: progress.fraction });
-        }
+        fraction = progress.fraction;
+        if (!ac.signal.aborted) setTask({ kind, progress });
       });
       return true;
     } catch (e) {
       if ((e as Error).name !== "AbortError") setError((e as Error).message || "something went wrong");
       return false;
     } finally {
+      clearInterval(heartbeat);
       saveRunning(job.id, o.lang, null);
       abort.current = null;
       setTask(null);
@@ -111,7 +127,13 @@ export function ReadyOutput({
   }
 
   async function preview() {
-    const m = modules ?? (await loadRender());
+    let m: RenderModules;
+    try {
+      m = modules ?? (await loadRender());
+    } catch {
+      setError("the video tools didn't load. Reload the page to try again");
+      return;
+    }
     if (await run("preview", (signal, onProgress) => m.run.makePreview(job.id, o.lang, onProgress, signal))) await onSaved();
   }
 
@@ -194,6 +216,8 @@ function Download({
   const [choices, setChoices] = useState<Choice[] | null>(null);
   const [quality, setQuality] = useState<QualityId | null>(null);
   const [checkError, setCheckError] = useState("");
+  const [pickError, setPickError] = useState("");
+  const [attempt, setAttempt] = useState(0);
 
   // how fast each quality would be on this computer (a short test encode), to suggest one
   useEffect(() => {
@@ -207,23 +231,24 @@ function Download({
         setChoices(r.choices);
         setQuality(r.pick);
       },
-      (e) => live && setCheckError((e as Error).message),
+      (e) => live && setCheckError((e as Error).message || "something went wrong"),
     );
     return () => {
       live = false;
     };
-  }, [job.id, o.lang]);
+  }, [job.id, o.lang, attempt]);
 
   async function download() {
     const choice = choices?.find((c) => c.quality.id === quality);
     if (!choice || !modules) return;
     const filename = modules.run.downloadName(job.name, o.lang);
     // first thing in the click: the browser only opens its "Save as" window right after a click
+    setPickError("");
     let save;
     try {
       save = await modules.save.chooseSaveTarget(filename);
     } catch (e) {
-      setCheckError((e as Error).message);
+      setPickError(`Couldn't save there: ${(e as Error).message}`);
       return;
     }
     if (!save) return; // closed the window
@@ -232,7 +257,23 @@ function Download({
       setSaved(filename);
   }
 
-  if (checkError) return <Notice tone="bad">{checkError}</Notice>;
+  if (checkError) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Notice tone="bad">Couldn&apos;t get the download ready: {checkError}</Notice>
+        <Button
+          kind="plain"
+          className="self-start"
+          onClick={() => {
+            setCheckError("");
+            setAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
   if (!choices) return <p className="text-sm text-neutral-500">Checking how fast this computer can make the video…</p>;
   return (
     <div className="flex flex-col gap-2">
@@ -253,6 +294,7 @@ function Download({
           Download
         </Button>
       </div>
+      {pickError && <Notice tone="bad">{pickError}</Notice>}
       {saved ? (
         <p className="text-sm text-emerald-700 dark:text-emerald-300">Saved {saved}.</p>
       ) : (

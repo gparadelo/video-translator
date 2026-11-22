@@ -16,7 +16,8 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[i
 
   const body = await request.json().catch(() => null);
   const bytes = Number(body?.bytes);
-  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_PREVIEW_BYTES) return fail(400, "the preview is too big");
+  if (!Number.isInteger(bytes) || bytes < 1) return fail(400, "say how big the preview is (bytes)");
+  if (bytes > MAX_PREVIEW_BYTES) return fail(413, "the preview is too big");
 
   const { data: out } = await supabase
     .from("job_outputs")
