@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { extension, fail, MAX_BYTES, VIDEO_TYPES } from "@/lib/api";
 import { LANGS } from "@/lib/jobs";
 import { uploadUrl } from "@/lib/r2";
+import { listOf, missingFor, toStatus } from "@/lib/setup";
 import { getUser } from "@/lib/supabase/server";
 
 // POST /api/jobs  {name, languages, filename?, bytes?, reference?, title?, title_lang?}
@@ -32,6 +33,10 @@ export async function POST(request: NextRequest) {
     return fail(400, "the video must be under 5 GB");
   if (!Array.isArray(languages) || !languages.length || !languages.every((l) => /^[a-z]{2}$/.test(String(l))))
     return fail(400, "choose at least one language (2-letter codes)");
+
+  // Projects run on the person's own keys and voice: don't start one that can't finish.
+  const missing = missingFor(toStatus((await supabase.rpc("my_key_status")).data), { video: hasVideo, title: Boolean(title) });
+  if (missing.length) return fail(409, `first add ${listOf(missing)} in Settings`);
 
   const { data: job, error } = await supabase
     .from("jobs")

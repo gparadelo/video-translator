@@ -1,13 +1,16 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["requests", "anthropic", "boto3"]
+# dependencies = ["requests", "anthropic", "boto3", "cryptography"]
 # ///
 """
 worker.py - does the web app's jobs on this Mac.
 
 It only makes outgoing connections: it asks the database for work, downloads the video from storage,
 runs the pipeline in scripts/vt.py, and uploads the results.
+
+Every job runs on its owner's own ElevenLabs and Claude keys and voice, saved in the web app's Settings
+(encrypted; SECRETS_KEY opens them). The worker has no keys of its own, so nobody's job is billed to anyone else.
 
   uv run worker/worker.py            # run until stopped
   uv run worker/worker.py --once     # do the jobs that are waiting, then exit
@@ -28,7 +31,10 @@ import time
 import traceback
 from pathlib import Path
 
+import base64
+
 import requests
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
@@ -60,6 +66,28 @@ def need(name: str) -> str:
     if not v:
         sys.exit(f"{name} is not set - put it in {HERE / '.env'} (see .env.example)")
     return v
+
+
+# Keys that must not come from the worker's own settings: each job brings its owner's (see open_secret).
+GLOBAL_KEYS = ("ELEVENLABS_API_KEY", "ANTHROPIC_API_KEY", "ELEVENLABS_VOICE_ID")
+
+
+def secrets_key() -> bytes:
+    key = base64.b64decode(need("SECRETS_KEY"))
+    if len(key) != 32:
+        sys.exit("SECRETS_KEY must be 32 bytes, base64 - the same value as in the web app's settings")
+    return key
+
+
+def open_secret(master: bytes, sealed: str | None, user_id: str, name: str) -> str | None:
+    """Decrypt one saved key: "v1:" + base64(iv | ciphertext | tag), AES-256-GCM, bound to the person and the
+    key's name. Same format as web/lib/secrets.ts."""
+    if not sealed:
+        return None
+    if not sealed.startswith("v1:"):
+        raise ValueError("unknown key format")
+    raw = base64.b64decode(sealed[3:])
+    return AESGCM(master).decrypt(raw[:12], raw[12:], f"{user_id}:{name}".encode()).decode()
 
 
 class Canceled(Exception):
@@ -96,6 +124,13 @@ class Database:
 
     def profile(self, user_id: str) -> dict:
         r = self.send("GET", "/rest/v1/profiles", params={"id": f"eq.{user_id}", "select": "voice_id,voice_ids"})
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0] if rows else {}
+
+    def secrets(self, user_id: str) -> dict:
+        r = self.send("GET", "/rest/v1/user_secrets",
+                      params={"user_id": f"eq.{user_id}", "select": "elevenlabs_key,anthropic_key"})
         r.raise_for_status()
         rows = r.json()
         return rows[0] if rows else {}
@@ -176,8 +211,8 @@ class Heartbeat(threading.Thread):
 # ----------------------------------------------------------------------------- one job
 
 class Job:
-    def __init__(self, db: Database, store: Storage, worker_id: str, root: Path, row: dict):
-        self.db, self.store, self.worker_id, self.row = db, store, worker_id, row
+    def __init__(self, db: Database, store: Storage, worker_id: str, root: Path, row: dict, master: bytes):
+        self.db, self.store, self.worker_id, self.row, self.master = db, store, worker_id, row, master
         self.id = row["id"]
         self.dir = root / self.id
         self.beat = Heartbeat(worker_id, self.id)
@@ -222,6 +257,9 @@ class Job:
             self.beat.check()
         # per-job settings for vt.py: this person's languages and voice
         prof = self.db.profile(self.row["user_id"])
+        langs = [l for l in self.row.get("languages") or [] if l != self.row.get("base_lang")]
+        if not prof.get("voice_id") and not all((prof.get("voice_ids") or {}).get(l) for l in langs):
+            raise vt.VTError("choose your ElevenLabs voice in Settings, then try again")
         lines = [f"languages = {json.dumps(self.row.get('languages') or [])}"]
         voices = {k: v for k, v in (prof.get("voice_ids") or {}).items() if v}
         if prof.get("voice_id") or voices:
@@ -231,6 +269,22 @@ class Job:
             if voices:
                 lines.append("voice_ids = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in voices.items()) + " }")
         (self.dir / "job.toml").write_text("\n".join(lines) + "\n")
+
+    def use_owner_keys(self):
+        """This job runs on its owner's keys (Settings in the web app), and only on those."""
+        uid = self.row["user_id"]
+        saved = self.db.secrets(uid)
+        try:
+            eleven = open_secret(self.master, saved.get("elevenlabs_key"), uid, "elevenlabs")
+            claude = open_secret(self.master, saved.get("anthropic_key"), uid, "anthropic")
+        except Exception as e:
+            say(f"  couldn't decrypt the saved keys ({type(e).__name__}): is SECRETS_KEY the same as the web app's?")
+            raise vt.VTError("your saved API keys couldn't be read - save them again in Settings, then try again")
+        if not eleven:
+            raise vt.VTError("add your ElevenLabs API key in Settings, then try again")
+        if not claude:
+            raise vt.VTError("add your Claude API key in Settings, then try again")
+        vt.use_keys(ELEVENLABS_API_KEY=eleven, ANTHROPIC_API_KEY=claude)
 
     # --- the two halves ---------------------------------------------------------------------
 
@@ -298,6 +352,7 @@ class Job:
         self.beat.start()
         vt.set_reporter(self.on_event)
         try:
+            self.use_owner_keys()
             self.setup_folder()
             if self.row["status"] == "preparing":
                 self.prepare()
@@ -314,6 +369,7 @@ class Job:
             self.finish(f"Something unexpected went wrong on the worker ({type(e).__name__}). "
                         f"The details are in the worker's log.")
         finally:
+            vt.use_keys()  # never let one person's keys reach the next job
             vt.set_reporter(None)
             self.beat.stopped.set()
             self.beat.join(timeout=10)
@@ -353,8 +409,13 @@ def main():
         vt.check_tools()
     except vt.VTError as e:
         sys.exit(str(e))
-    for name in ("ELEVENLABS_API_KEY", "ANTHROPIC_API_KEY"):
-        need(name)
+    master = secrets_key()
+    vt.KEYS_WHERE = "Settings in the web app"
+    # Keys or a voice in worker/.env (or a .env in the job folders) would quietly pay for, or speak, other
+    # people's videos. Drop them: every job brings its owner's.
+    for name in [k for k in os.environ if k in GLOBAL_KEYS or k.startswith("ELEVENLABS_VOICE_ID_")]:
+        say(f"ignoring {name} from the worker's settings: each person's projects use their own (Settings in the web app)")
+        del os.environ[name]
 
     worker_id = os.environ.get("WORKER_ID") or socket.gethostname().split(".")[0]
     db, store = Database(), Storage()
@@ -367,7 +428,7 @@ def main():
             say(f"couldn't reach the database: {e}")
             row = None
         if row and row.get("id"):
-            Job(db, store, worker_id, root, row).run()
+            Job(db, store, worker_id, root, row, master).run()
             continue  # ask again straight away
         if a.once:
             return

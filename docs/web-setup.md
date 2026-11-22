@@ -12,7 +12,7 @@ and a Cloudflare R2 bucket (the videos). A worker on a Mac does the actual trans
 4. **People:** Authentication -> Users -> Add user, once per person (their email). The login page only
    signs in people who already exist; it never creates accounts.
 5. **Approve them:** Table Editor -> `profiles` -> set `approved` to true for each person. Without it they
-   can sign in but not create jobs. `voice_id` there is that person's ElevenLabs voice.
+   can sign in but not create jobs.
 6. **Keys:** Project Settings -> API. The project URL and the publishable key go in the web app's
    settings (below). The secret (service role) key is only for the worker: never put it in the web app.
 
@@ -36,16 +36,22 @@ keeps it awake; if the Mac was off for longer, un-pause the project in the Supab
 4. **Keys:** R2 -> Manage API tokens -> create one with Object Read & Write on this bucket only. You get an
    access key ID and a secret; the account ID is on the R2 overview page.
 
-## 2b. Claude API key (title translations)
-A project's title is translated by the Claude API, called from the server. Create a key at
-console.anthropic.com -> API Keys and set it as `ANTHROPIC_API_KEY` in `web/.env.local` and in Vercel
-(Settings -> Environment Variables). It is only read on the server; never prefix it with `NEXT_PUBLIC_`.
-Only signed-in people can translate titles, and every request is billed to that key.
+## 2b. Everyone's own API keys
+Each person enters their own ElevenLabs API key, Claude API key and ElevenLabs voice ID on the app's
+**Settings** page. Their videos are spoken in their voice and billed to their accounts, and title translations
+use their Claude key. Until they have, the app asks them to and won't start a project. You do the same for
+your own account.
+
+The keys are checked when saved, then encrypted (AES-256-GCM) before they go into the database (table
+`user_secrets`, which people can't read). Settings only ever shows a key's last 4 characters. The encryption
+key is `SECRETS_KEY`: create one with `openssl rand -base64 32` and set the same value in `web/.env.local`,
+in Vercel (Settings -> Environment Variables, never with `NEXT_PUBLIC_`) and in `worker/.env`. Keep it
+secret. If you change it, every saved key stops working and everyone has to save theirs again.
 
 ## 3. Run the site
 ```
 cd web
-cp .env.example .env.local     # fill in the values from steps 1 and 2
+cp .env.example .env.local     # fill in the values from steps 1, 2 and 2b
 pnpm install
 pnpm dev                       # http://localhost:3000
 ```
@@ -57,7 +63,8 @@ The worker asks the database for jobs, downloads the video, runs the pipeline an
 It only makes outgoing connections, so nothing on the Mac is exposed to the internet.
 
 1. `cp worker/.env.example worker/.env` and fill it in: the Supabase URL and **secret** key, the same R2
-   values as the web app, and the ElevenLabs and Anthropic keys.
+   values as the web app, and the same `SECRETS_KEY`. It has no ElevenLabs or Claude keys of its own: each job
+   runs on its owner's keys from Settings, and any such keys left in `worker/.env` are ignored.
 2. Try it in a terminal first: `uv run worker/worker.py` (stop it with Ctrl-C).
 3. Make it start at login and restart if it stops: `worker/install-service.sh`
    (`worker/install-service.sh remove` undoes it). Its log is `~/Library/Logs/video-translator-worker.log`.

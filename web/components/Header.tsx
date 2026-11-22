@@ -31,6 +31,9 @@ export function Header() {
         )}
         <form action="/auth/signout" method="post" className="ml-auto flex items-center gap-3 text-xs text-neutral-500">
           <span className="hidden sm:inline">{info?.email}</span>
+          <Link href="/settings" className="underline">
+            Settings
+          </Link>
           <button type="submit" className="underline">
             Sign out
           </button>

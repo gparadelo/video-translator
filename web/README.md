@@ -23,7 +23,9 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 ## Settings
 
 Copy `.env.example` to `.env.local` and fill it in (see [docs/web-setup.md](../docs/web-setup.md)); set the same
-variables in Vercel. `ANTHROPIC_API_KEY` is the Claude API key used server-side to translate a project's title
+variables in Vercel. Each person saves their own ElevenLabs key, Claude key and voice on `/settings`
+(`app/api/settings/route.ts`); keys are encrypted with `SECRETS_KEY` (`lib/secrets.ts`) and never sent back to
+the browser. A project's title is translated with the person's own Claude key
 (`app/api/jobs/[id]/title/route.ts`, `lib/translate-title.ts`) into the project's languages as plain
 ASCII titles of at most 60 characters. A project has a video, a title, or both.
 
