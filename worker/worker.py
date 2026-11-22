@@ -7,7 +7,8 @@
 worker.py - does the web app's jobs on this Mac.
 
 It only makes outgoing connections: it asks the database for work, downloads the video from storage,
-runs the pipeline in scripts/vt.py, and uploads the results.
+runs the pipeline in scripts/vt.py up to the timing plan, and uploads, per language, the plan and the finished
+voice track. It doesn't render: the person's browser does (web/lib/render).
 
 Every job runs on its owner's own ElevenLabs and Claude keys and voice, saved in the web app's Settings
 (encrypted; SECRETS_KEY opens them). The worker has no keys of its own, so nobody's job is billed to anyone else.
@@ -40,7 +41,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 import vt  # noqa: E402
 
-VERSION = "1"
+VERSION = "2"            # 2: uploads plan.json + voice.wav per language; the browser renders
 POLL_SECONDS = 10        # how often to ask for work when idle (this also tells the app "I'm online")
 LEASE_SECONDS = 120      # a job whose worker is silent this long goes back to the queue
 KEEP_DAYS = 7            # job folders are kept this long, so re-running a language reuses the voice audio
@@ -165,8 +166,8 @@ class Storage:
         self.s3.download_file(self.bucket, key, str(tmp), Callback=progress(total))
         tmp.rename(dest)
 
-    def upload(self, path: Path, key: str, progress):
-        self.s3.upload_file(str(path), self.bucket, key, ExtraArgs={"ContentType": "video/mp4"},
+    def upload(self, path: Path, key: str, content_type: str, progress):
+        self.s3.upload_file(str(path), self.bucket, key, ExtraArgs={"ContentType": content_type},
                             Callback=progress(path.stat().st_size))
 
 
@@ -311,24 +312,36 @@ class Job:
             self.output(lang, "running")
             try:
                 # one language at a time, so a problem with one doesn't stop the others
-                res = vt.produce(self.dir, [lang], preview=True)[0]
+                res = vt.produce(self.dir, [lang], render=False)[0]
+                plan, voice = self.render_inputs(lang)
             except vt.VTError as e:
                 say(f"  {lang} failed: {e}")
                 errors.append(f"{lang}: {e}")
                 self.output(lang, "failed", p_flags=[str(e)])
                 continue
+            # The browser renders the video from these (web/lib/render). See "Files in storage" in docs/web-setup.md.
             base = f"u/{self.row['user_id']}/{self.id}/out/{lang}"
-            out, prev = Path(res["output"]), Path(res["preview"])
-            say(f"  {lang}: uploading ({out.stat().st_size / 1e6:.0f} MB)...")
-            self.store.upload(prev, f"{base}_preview.mp4", self.transfer("upload", lang))
-            self.store.upload(out, f"{base}.mp4", self.transfer("upload", lang))
-            self.output(lang, "done", p_seconds=res["seconds"], p_flags=res["flags"],
-                        p_report=Path(res["report"]).read_text(), p_output_key=f"{base}.mp4",
-                        p_output_bytes=out.stat().st_size, p_preview_key=f"{base}_preview.mp4")
-            out.unlink()  # the full-size file is in storage now; the rest of the folder stays for re-runs
+            say(f"  {lang}: uploading the plan and the voice ({voice.stat().st_size / 1e6:.0f} MB)...")
+            self.store.upload(plan, f"{base}/plan.json", "application/json", self.transfer("upload", lang))
+            self.store.upload(voice, f"{base}/voice.wav", "audio/wav", self.transfer("upload", lang))
+            self.output(lang, "ready", p_seconds=res["seconds"], p_flags=res["flags"],
+                        p_report=Path(res["report"]).read_text(), p_plan_key=f"{base}/plan.json",
+                        p_voice_key=f"{base}/voice.wav")
             done += 1
         # every language failed -> the job failed; some failed -> done, with those marked failed
         self.finish(None if done else errors[0])
+
+    def render_inputs(self, lang: str) -> tuple[Path, Path]:
+        """What the browser renders a language from: the plan without this Mac's paths (work/<lang>/plan_web.json)
+        and the finished voice track (work/<lang>/voice.wav)."""
+        P = vt.job_paths(self.dir)
+        A = vt.load_analysis(P)
+        plan = json.loads((P["work"] / lang / "plan.json").read_text())
+        vt.log(f"{lang}: mixing the voice...", stage="voice", lang=lang)
+        voice = vt.build_voice_track(P, A, plan)
+        web = P["work"] / lang / "plan_web.json"
+        web.write_text(json.dumps(vt.portable_plan(plan, vt.video_size(Path(A["video"]["path"]))), indent=1))
+        return web, voice
 
     def output(self, lang: str, status: str, **fields):
         self.db.rpc("worker_output", p_worker=self.worker_id, p_job=self.id, p_lang=lang, p_status=status, **fields)
