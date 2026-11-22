@@ -6,6 +6,7 @@ import { api, uploadVideo } from "@/lib/jobs";
 import { buildLanguage, type DecodedClip } from "./build";
 import { SAMPLE_RATE } from "./config";
 import { parseClipMeta, parseInputs } from "./inputs";
+import { mp3Gapless, trimLikeFfmpeg } from "./mp3";
 
 export type BuildStage = "loading" | "building" | "uploading";
 export type BuildProgress = { stage: BuildStage; fraction: number };
@@ -25,11 +26,12 @@ async function getJson<T>(url: string, what: string, signal?: AbortSignal): Prom
 }
 
 /**
- * Decode one MP3 to mono samples at 44.1 kHz with the browser's own decoder (Web Audio). In Chrome and Edge it
- * gives ffmpeg's samples: the encoder delay and padding from the LAME header removed, values equal to the last
- * bit or so (checked by test/e2e).
+ * Decode one MP3 to mono samples at 44.1 kHz with the browser's own decoder (Web Audio), cut like ffmpeg cuts it
+ * (encoder delay and padding from the LAME header removed: mp3.ts). Chrome and Edge give ffmpeg's samples to the
+ * last bit or so (checked by test/e2e).
  */
 export async function decodeMp3(bytes: ArrayBuffer): Promise<{ samples: Float32Array; sampleRate: number }> {
+  const gapless = mp3Gapless(new Uint8Array(bytes)); // read before decoding takes the buffer
   const ctx = new OfflineAudioContext(1, 1, SAMPLE_RATE);
   let buf: AudioBuffer;
   try {
@@ -37,14 +39,17 @@ export async function decodeMp3(bytes: ArrayBuffer): Promise<{ samples: Float32A
   } catch {
     throw new Error("this browser couldn't read the recorded voice");
   }
-  if (buf.numberOfChannels === 1) return { samples: buf.getChannelData(0), sampleRate: buf.sampleRate };
-  // ElevenLabs clips are mono; anything else is mixed down (the average of the channels)
-  const out = new Float32Array(buf.length);
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) out[i] += d[i] / buf.numberOfChannels;
+  let samples: Float32Array;
+  if (buf.numberOfChannels === 1) samples = buf.getChannelData(0);
+  else {
+    // ElevenLabs clips are mono; anything else is mixed down (the average of the channels)
+    samples = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) samples[i] += d[i] / buf.numberOfChannels;
+    }
   }
-  return { samples: out, sampleRate: buf.sampleRate };
+  return { samples: trimLikeFfmpeg(samples, gapless), sampleRate: buf.sampleRate };
 }
 
 /** Run `fn` over `items`, at most `n` at a time, in order of the results. */
