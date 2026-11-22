@@ -28,6 +28,10 @@
 --   ready    -> as in phase 2
 --   failed   -> flags[1] says why (fail_run)
 --
+-- job_outputs.runner / runner_until: which browser is making a running language (hold_run). Only that one's
+-- produce requests are answered, so two devices (or two browsers) never pay twice for the same step; another
+-- one takes over a minute after the holder stops renewing it (tab closed, device asleep).
+--
 -- jobs.voices: a job's languages get their voices pinned when the first run of the job starts (start_run), with
 -- the voice Settings give each then; a pin never changes, so a retry or a new translation speaks with the same
 -- voice.
@@ -42,6 +46,10 @@ alter table public.jobs add constraint jobs_status_check check (status in
 alter table public.jobs
   add column analysis_key    text,  -- R2 key of analysis.json (written by a version 4 worker), null until then
   add column analysis_script text;  -- the transcript analysis.json was made from: approve_job compares it
+
+alter table public.job_outputs
+  add column runner       text,         -- the browser making this run (hold_run), null until one holds it
+  add column runner_until timestamptz;  -- another browser may take it over after this
 
 -- ------------------------------------------------------------------ jobs that were waiting for an older worker
 
@@ -177,11 +185,31 @@ begin
   update public.job_outputs
      set status = 'running', generation = generation + 1, seconds = null, flags = '{}', report = null,
          output_key = null, output_bytes = null, preview_key = null, preview_bytes = null, plan_key = null,
-         voice_key = null, inputs_key = null
+         voice_key = null, inputs_key = null, runner = null, runner_until = null
    where job_id = p_job and lang = p_lang and status in ('pending', 'failed')
   returning generation into gen;
   if gen is null then raise exception 'this language is already being made, or is done'; end if;
   return gen;
+end $$;
+
+-- The job page's browser (p_runner: an id it keeps) makes this run, or carries on making it; it calls this every
+-- 20 seconds while it does. 'ok': it holds the run for the next minute, and the produce routes answer only its
+-- requests. 'taken': another browser holds it (it may take over once that one stops renewing). 'gone': the run
+-- isn't going on any more (canceled, started again, voiced or failed).
+create function public.hold_run(p_job uuid, p_lang text, p_generation int, p_runner text) returns text
+language plpgsql security definer set search_path = '' as $$
+declare o public.job_outputs;
+begin
+  if p_runner is null or length(p_runner) not between 8 and 64 then raise exception 'invalid runner'; end if;
+  select x.* into o from public.job_outputs x join public.jobs j on j.id = x.job_id
+   where x.job_id = p_job and x.lang = p_lang and x.user_id = auth.uid() and x.status = 'running'
+     and x.generation = p_generation and j.status = 'producing'
+     for update of x;
+  if o.job_id is null then return 'gone'; end if;
+  if o.runner is not null and o.runner <> p_runner and o.runner_until > now() then return 'taken'; end if;
+  update public.job_outputs set runner = p_runner, runner_until = now() + interval '60 seconds'
+   where job_id = p_job and lang = p_lang;
+  return 'ok';
 end $$;
 
 -- The produce route (POST /api/jobs/<id>/produce/<lang>/fit) wrote the run's plan inputs, inputs.json last: the
@@ -217,11 +245,18 @@ end $$;
 create function public.log_usage(p_job uuid, p_service text, p_amounts jsonb) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
-  if p_service not in ('claude', 'elevenlabs_tts', 'elevenlabs_stt', 'elevenlabs_alignment') then
-    raise exception 'unknown service %', p_service;
-  end if;
-  if jsonb_typeof(p_amounts) <> 'object' or length(p_amounts::text) > 2000 then
-    raise exception 'amounts must be a small object';
+  -- people record what they paid with their own keys (informational): only the produce routes' calls, with
+  -- sane amounts, and only on their own jobs
+  if p_service not in ('claude', 'elevenlabs_tts') then raise exception 'unknown service %', p_service; end if;
+  if jsonb_typeof(p_amounts) <> 'object' or exists (
+       select 1 from jsonb_each(p_amounts) e
+        where not (case
+          when e.key = 'model' then jsonb_typeof(e.value) = 'string' and length(e.value #>> '{}') <= 100
+          when e.key in ('input_tokens', 'output_tokens', 'characters') then
+            jsonb_typeof(e.value) = 'number' and (e.value #>> '{}')::numeric between 0 and 10000000
+            and (e.value #>> '{}')::numeric = trunc((e.value #>> '{}')::numeric)
+          else false end)) then
+    raise exception 'amounts must be model, input_tokens, output_tokens or characters, within reason';
   end if;
   insert into public.usage_events (job_id, user_id, service, amounts)
   select id, user_id, p_service, p_amounts from public.jobs where id = p_job and user_id = auth.uid();
@@ -295,7 +330,10 @@ language plpgsql security definer set search_path = '' as $$
 begin
   update public.jobs
      set status = 'needs_review', base_lang = p_base_lang, script = p_script, analysis_script = p_script,
-         analysis_key = 'u/' || user_id || '/' || id || '/analysis.json',
+         -- a version 3 worker that was preparing this when the database was upgraded didn't upload analysis.json:
+         -- then approving the transcript sends it through a version 4 worker (approved -> aligning) first
+         analysis_key = case when public.worker_version_ok((select w.version from public.workers w where w.id = p_worker))
+                             then 'u/' || user_id || '/' || id || '/analysis.json' end,
          names_fixed = coalesce(p_names_fixed, '{}'), warnings = coalesce(p_warnings, '{}'),
          worker_id = null, lease_until = null, attempts = 0, progress = null
    where id = p_job and worker_id = p_worker and status = 'preparing';
@@ -322,6 +360,8 @@ begin
   insert into public.job_outputs (job_id, user_id, lang, status)
   select j.id, j.user_id, l, 'pending' from unnest(j.languages) l where l is distinct from j.base_lang
   on conflict (job_id, lang) do nothing;
+  -- a job whose languages were all voiced before the upgrade (by the old worker) has nothing left to make
+  perform public.settle_job(j.id);
 end $$;
 
 -- The worker's part failed (p_error = what to tell the person).
@@ -342,11 +382,12 @@ drop function public.worker_pin_voices(text, uuid, jsonb);
 -- ------------------------------------------------------------------ who may call what
 
 revoke execute on function public.request_languages(uuid), public.settle_job(uuid), public.worker_version_ok(text),
-  public.start_run(uuid, text), public.mark_voiced(uuid, text, int), public.fail_run(uuid, text, int, text),
-  public.log_usage(uuid, text, jsonb), public.worker_aligned(text, uuid, text, text[], boolean)
+  public.start_run(uuid, text), public.hold_run(uuid, text, int, text), public.mark_voiced(uuid, text, int),
+  public.fail_run(uuid, text, int, text), public.log_usage(uuid, text, jsonb),
+  public.worker_aligned(text, uuid, text, text[], boolean)
   from public, anon, authenticated;
-grant execute on function public.start_run(uuid, text), public.mark_voiced(uuid, text, int),
+grant execute on function public.start_run(uuid, text), public.hold_run(uuid, text, int, text), public.mark_voiced(uuid, text, int),
   public.fail_run(uuid, text, int, text), public.log_usage(uuid, text, jsonb) to authenticated;
 grant execute on function public.request_languages(uuid), public.settle_job(uuid), public.worker_version_ok(text),
-  public.start_run(uuid, text), public.mark_voiced(uuid, text, int), public.fail_run(uuid, text, int, text),
+  public.start_run(uuid, text), public.hold_run(uuid, text, int, text), public.mark_voiced(uuid, text, int), public.fail_run(uuid, text, int, text),
   public.log_usage(uuid, text, jsonb), public.worker_aligned(text, uuid, text, text[], boolean) to service_role;

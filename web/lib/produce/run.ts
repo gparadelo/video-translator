@@ -24,6 +24,8 @@ export type ProduceOptions = {
   jobId: string;
   lang: string;
   generation: number;
+  /** this browser's id, as it holds the run (hold_run): the routes answer only the holder */
+  runner: string;
   onProgress?: (p: ProduceProgress) => void;
   /** a passing problem: trying again in `seconds` (null once it goes on) */
   onWaiting?: (w: Waiting) => void;
@@ -78,6 +80,36 @@ export class RunGone extends Error {
   }
 }
 
+/** Another browser holds the run (hold_run): this one waits until it lets go. */
+export class RunTaken extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunTaken";
+  }
+}
+
+type Online = { navigator?: { onLine?: boolean }; addEventListener?: typeof addEventListener; removeEventListener?: typeof removeEventListener };
+const offline = () => (globalThis as Online).navigator?.onLine === false;
+
+/** Resolves when the browser is online again (at once when it is, or outside a browser). */
+function online(signal?: AbortSignal): Promise<void> {
+  const w = globalThis as Online;
+  if (!offline() || !w.addEventListener) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      w.removeEventListener?.("online", done);
+      signal?.removeEventListener("abort", stop);
+      resolve();
+    };
+    const stop = () => {
+      w.removeEventListener?.("online", done);
+      reject(signal?.reason ?? new DOMException("stopped", "AbortError"));
+    };
+    w.addEventListener!("online", done);
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
 type Answer = { error?: string; retry?: boolean; after?: number; code?: ErrorCode };
 
 /** POST one step, tried again on passing problems. Throws ProduceError (or RunGone, or the abort). */
@@ -93,7 +125,7 @@ async function step<T>(o: ProduceOptions, name: string, body: Record<string, unk
       const r = await fetchFn(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ generation: o.generation, ...body }),
+        body: JSON.stringify({ generation: o.generation, runner: o.runner, ...body }),
         signal: o.signal,
       });
       status = r.status;
@@ -104,9 +136,17 @@ async function step<T>(o: ProduceOptions, name: string, body: Record<string, unk
       }
     } catch (e) {
       if (o.signal?.aborted) throw e;
+      if (offline()) {
+        // no network (wifi gone, laptop asleep): wait for it, without using up the tries
+        o.onWaiting?.({ seconds: 0, reason: "no internet connection" });
+        await online(o.signal);
+        attempt--;
+        continue;
+      }
       data = { error: "the connection dropped", retry: true } as Answer & T;
     }
     if (data.code === "gone") throw new RunGone(data.error ?? "this language was stopped");
+    if (data.code === "taken") throw new RunTaken(data.error ?? "another browser is making this language");
     // 429 and 5xx without an answer of ours: the platform (a timeout, a deploy, too many requests)
     const passing = data.retry || status === 429 || (status >= 500 && !data.error) || status === 502 || status === 503 || status === 504;
     if (!passing || attempt >= TRIES) {

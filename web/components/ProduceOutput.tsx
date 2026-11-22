@@ -4,16 +4,40 @@ import { useEffect, useState } from "react";
 import { Bar, Button, Card, Notice, Pill } from "@/components/ui";
 import { langName, type Job, type Output } from "@/lib/jobs";
 import { useRenderGuard } from "@/lib/render/guard";
-import { RunGone, produceLanguage, type ProduceProgress, type Waiting } from "@/lib/produce/run";
+import { RunGone, RunTaken, produceLanguage, type ProduceProgress, type Waiting } from "@/lib/produce/run";
 import { createClient } from "@/lib/supabase/client";
 
 // A language being made on this page (lib/produce/run.ts): translated, voiced beat by beat and fitted, with the
 // person's own keys, until it is voiced; the card then becomes the voiced card (VoicedOutput) and the render card.
 // It starts by itself whenever the page is open: a waiting language gets a new run (start_run), a running one
-// carries on from what's saved. One tab of this browser works on a language at a time (Web Locks).
+// carries on from what's saved.
+//
+// One browser makes a language at a time: this browser holds the run in the database (hold_run, renewed every
+// 20 s; the produce routes answer only the holder), so another device waits instead of paying twice; inside
+// this browser, one tab at a time (Web Locks).
 
 type Lock = { request(name: string, opts: { ifAvailable: boolean }, cb: (lock: unknown) => Promise<void>): Promise<void> };
 const locks = () => (globalThis.navigator as Navigator & { locks?: Lock } | undefined)?.locks;
+
+/** HOLD_EVERY: how often the run is held again (hold_run holds it for 60 s). */
+const HOLD_EVERY = 20_000;
+/** How often a browser that doesn't hold the run looks again. */
+const LOOK_AGAIN = 15_000;
+
+/** This browser's id for hold_run: the same in every tab and after a reload, so reopening the page carries on. */
+let memoRunner: string | undefined;
+function runnerId() {
+  try {
+    let id = localStorage.getItem("vt-runner");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("vt-runner", id);
+    }
+    return id;
+  } catch {
+    return (memoRunner ??= crypto.randomUUID());
+  }
+}
 
 function stepText(p: ProduceProgress | null) {
   if (!p) return "Starting…";
@@ -34,7 +58,7 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
   const [progress, setProgress] = useState<ProduceProgress | null>(null);
   const [waiting, setWaiting] = useState<Waiting>(null);
   const [error, setError] = useState("");
-  const [elsewhere, setElsewhere] = useState(false);
+  const [elsewhere, setElsewhere] = useState<"tab" | "browser" | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [active, setActive] = useState(false);
   useRenderGuard(active);
@@ -42,6 +66,19 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
   useEffect(() => {
     const ac = new AbortController();
     const stop = () => ac.signal.aborted;
+    const runner = runnerId();
+    let later: ReturnType<typeof setTimeout> | undefined;
+    const again = (ms: number) => {
+      clearTimeout(later);
+      if (!stop()) later = setTimeout(take, ms);
+    };
+
+    const hold = async () => {
+      const { data, error: e } = await supabase.rpc("hold_run", {
+        p_job: job.id, p_lang: o.lang, p_generation: o.generation, p_runner: runner,
+      });
+      return e ? "error" : (data as "ok" | "taken" | "gone");
+    };
 
     async function make() {
       if (o.status === "pending") {
@@ -52,16 +89,47 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
         await onChanged();
         return;
       }
+
+      const held = await hold();
+      if (stop()) return;
+      if (held === "gone") return void (await onChanged());
+      if (held !== "ok") { // another browser has it, or the database couldn't be reached: look again soon
+        setElsewhere(held === "taken" ? "browser" : null);
+        if (held === "error") setWaiting({ seconds: Math.round(LOOK_AGAIN / 1000), reason: "couldn't reach the server" });
+        return again(LOOK_AGAIN);
+      }
+      setElsewhere(null);
+      setWaiting(null);
+
+      // the run stops when the card goes away, or when this browser no longer holds it
+      const run = new AbortController();
+      const off = () => run.abort();
+      ac.signal.addEventListener("abort", off, { once: true });
+      let lost = false;
+      const beat = setInterval(async () => {
+        const h = await hold();
+        if (h === "taken" || h === "gone") {
+          lost = true;
+          run.abort();
+        }
+      }, HOLD_EVERY);
+
       setActive(true);
       try {
         await produceLanguage({
-          jobId: job.id, lang: o.lang, generation: o.generation, signal: ac.signal,
+          jobId: job.id, lang: o.lang, generation: o.generation, runner, signal: run.signal,
           onProgress: (p) => !stop() && setProgress(p),
           onWaiting: (w) => !stop() && setWaiting(w),
         });
         if (!stop()) await onChanged();
       } catch (e) {
-        if (stop() || (e as Error).name === "AbortError") return;
+        if (stop()) return;
+        if (e instanceof RunTaken || lost) { // another browser took over: wait for it to let go
+          setElsewhere("browser");
+          await onChanged();
+          return again(LOOK_AGAIN);
+        }
+        if ((e as Error).name === "AbortError") return;
         if (e instanceof RunGone) {
           await onChanged();
           return;
@@ -72,6 +140,8 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
         if (f) setError(msg); // couldn't record it: show it here, Try again carries on with this run
         await onChanged();
       } finally {
+        clearInterval(beat);
+        ac.signal.removeEventListener("abort", off);
         if (!stop()) {
           setActive(false);
           setWaiting(null);
@@ -80,24 +150,22 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
     }
 
     const l = locks();
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const take = () => {
+    function take() {
+      if (stop()) return;
       if (!l || o.status === "pending") return void make(); // start_run itself lets only one tab start a run
       void l.request(`vt-produce:${job.id}:${o.lang}`, { ifAvailable: true }, async (lock) => {
         if (stop()) return;
         if (!lock) {
-          setElsewhere(true);
-          retry = setTimeout(take, 5000); // the other tab may close
-          return;
+          setElsewhere("tab");
+          return again(5000); // the other tab may close
         }
-        setElsewhere(false);
         await make(); // the lock is held until this run stops (finished, failed, or the card goes away)
       });
-    };
+    }
     take();
     return () => {
       ac.abort();
-      clearTimeout(retry);
+      clearTimeout(later);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one run per status, generation and attempt
   }, [job.id, o.lang, o.status, o.generation, attempt]);
@@ -120,14 +188,20 @@ export function ProduceOutput({ job, output: o, onChanged }: { job: Job; output:
           </Button>
         </>
       ) : elsewhere ? (
-        <p className="text-sm text-neutral-500">Being made in another tab of this browser.</p>
+        <p className="text-sm text-neutral-500">
+          {elsewhere === "tab"
+            ? "Being made in another tab of this browser."
+            : "Being made on another device or browser. If that one was closed, this page takes over within a minute."}
+        </p>
       ) : (
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">{o.status === "pending" ? "Starting…" : stepText(progress)}</p>
           {voicing ? <Bar fraction={voicing.total ? voicing.done / voicing.total : 0} /> : null}
           {waiting && (
             <p className="text-xs text-amber-700 dark:text-amber-300">
-              {waiting.reason.replace(/ - trying again$/, "")}. Trying again in {waiting.seconds} s…
+              {waiting.seconds
+                ? `${waiting.reason.replace(/ - trying again$/, "")}. Trying again in ${waiting.seconds} s…`
+                : "No internet connection. It carries on when the connection is back."}
             </p>
           )}
           <p className="text-xs text-neutral-500">Keep this tab open until it&apos;s done. If it closes, it carries on from here next time.</p>

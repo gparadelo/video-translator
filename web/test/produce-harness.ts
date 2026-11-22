@@ -77,6 +77,8 @@ export type Backend = {
   claude: ClaudeClient;
   eleven: { apiKey: string; api: string };
   markVoiced: (run: Run) => Promise<void>;
+  /** the browser that holds a language's run (hold_run); unset: any browser is answered */
+  holder?: (lang: string) => string | null;
 };
 
 /** One produce route call: POST /api/jobs/<id>/produce/<lang>/<step> with `body`, answered like the route does. */
@@ -87,6 +89,9 @@ export async function handleStep(b: Backend, path: string, body: Record<string, 
   try {
     const run = b.run(lang, Number(body.generation));
     if (!run) throw new ProduceError("this language was stopped or started again", { status: 409, code: "gone" });
+    if (b.holder && body.runner !== b.holder(lang)) {
+      throw new ProduceError("another browser is making this language", { status: 409, code: "taken" });
+    }
     const out = name === "translate"
       ? await translateStep(run, b.claude, { kind: body.kind as "translate" | "rewrite", round: body.round as number | undefined })
       : name === "tts"

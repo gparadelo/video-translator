@@ -3,10 +3,11 @@
 //   retry: worth trying again in a moment (ElevenLabs or Claude busy, a dropped connection); `after` = seconds
 //          the service asked us to wait
 //   code "stale": the run moved on under this request (another tab, an older answer): start again from where the
-//          run is now; "gone": the run is over (canceled, started again): stop and show what's there
+//          run is now; "gone": the run is over (canceled, started again): stop and show what's there; "taken":
+//          another browser holds the run (hold_run): wait until it lets go
 //   otherwise the person has to do something (a key, credits): the language fails with this message.
 
-export type ErrorCode = "stale" | "gone";
+export type ErrorCode = "stale" | "gone" | "taken";
 
 export class ProduceError extends Error {
   status: number;

@@ -17,6 +17,9 @@ export const r2Store: Store = {
 };
 
 const LANG = /^[a-z]{2}$/;
+// as Postgres writes a uuid (it would also match other spellings, which would put the files under other keys)
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const RUNNER = /^[A-Za-z0-9-]{8,64}$/;
 const MAX_BODY = 4096;
 
 /** The request's JSON body (small: a few numbers), or a ProduceError. */
@@ -40,15 +43,17 @@ export const intIn = (x: unknown, lo: number, hi: number, what: string) => {
 /**
  * The run a request is about: the person's own row (row-level security), for a job that is producing, a language
  * that is running at the generation the page asked for. Anything else answers "gone": the page stops and shows
- * where the language is now.
+ * where the language is now. And only for the browser that holds the run (hold_run): another one is answered
+ * "taken", before anything is paid for.
  */
-async function loadRun(id: string, lang: string, generation: number, need: KeyName | null) {
+async function loadRun(id: string, lang: string, generation: number, runner: string, need: KeyName | null) {
   const { supabase, user } = await getUser();
   if (!user) throw new ProduceError("sign in first", { status: 401 });
+  if (!UUID.test(id)) throw new ProduceError("project not found", { status: 404, code: "gone" });
   if (!LANG.test(lang)) throw new ProduceError("no such language", { status: 400 });
   const { data: row, error } = await supabase
     .from("job_outputs")
-    .select("status, generation, user_id, jobs(status, voices, analysis_key)")
+    .select("status, generation, user_id, runner, jobs(status, voices, analysis_key)")
     .eq("job_id", id)
     .eq("lang", lang)
     .maybeSingle();
@@ -58,9 +63,10 @@ async function loadRun(id: string, lang: string, generation: number, need: KeyNa
   if (job.status !== "producing" || row.status !== "running" || row.generation !== generation) {
     throw new ProduceError("this language was stopped or started again", { status: 409, code: "gone" });
   }
+  if (row.runner !== runner) throw new ProduceError("another browser is making this language", { status: 409, code: "taken" });
   const voice = job.voices?.[lang];
   if (!voice) throw new ProduceError("this language has no voice: choose your ElevenLabs voice in Settings, then try again", { status: 409 });
-  if (!job.analysis_key) throw new ProduceError("the video hasn't been analyzed: approve the transcript again", { status: 409 });
+  if (!job.analysis_key) throw new ProduceError("the video hasn't been analyzed. Upload the video again as a new project", { status: 409 });
 
   let key = "";
   if (need) {
@@ -99,7 +105,8 @@ export async function produceStep<T>(request: NextRequest, params: Promise<{ id:
   try {
     const { id, lang } = await params;
     const b = await body(request);
-    const ctx = await loadRun(id, lang, intIn(b.generation, 1, 1_000_000, "the run (generation)"), need);
+    if (typeof b.runner !== "string" || !RUNNER.test(b.runner)) throw new ProduceError("the browser's id (runner) is missing", { status: 400 });
+    const ctx = await loadRun(id, lang, intIn(b.generation, 1, 1_000_000, "the run (generation)"), b.runner, need);
     return NextResponse.json(await handler(ctx, b));
   } catch (e) {
     const err = e instanceof ProduceError ? e

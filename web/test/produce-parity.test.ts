@@ -18,7 +18,7 @@ import { pyFloatRepr, pyJsonDumps, pyRoundTo } from "../lib/pipeline/py";
 import { CLAUDE, ELEVENLABS, KEY_PERMISSIONS } from "../lib/produce/config";
 import { ProduceError } from "../lib/produce/errors";
 import { outputKey, workKey } from "../lib/produce/keys";
-import { produceLanguage, RunGone, TRIES, type Waiting } from "../lib/produce/run";
+import { produceLanguage, RunGone, RunTaken, TRIES, type Waiting } from "../lib/produce/run";
 import { analysisId, mp3Duration, type Run } from "../lib/produce/steps";
 import { briefTable, checkScript, langScript, LANG_NAMES, refitPrompt, SCRIPT_SCHEMA, TRANSLATE_SYSTEM } from "../lib/produce/translate";
 import { ttsBody, ttsKey, voicedTexts } from "../lib/produce/tts";
@@ -55,7 +55,7 @@ type VtResult = {
   flags?: string[]; inputs?: unknown;
 };
 
-const USER = "user-1", JOB = "job-1", VOICE = "voice123456789";
+const USER = "user-1", JOB = "job-1", VOICE = "voice123456789", RUNNER = "browser-1";
 
 describe.skipIf(!ready)("lib/produce against vt.py", () => {
   let dir = "";
@@ -108,7 +108,7 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
     const { b, store, usage, voiced } = backend(c.analysis);
     let error: string | null = null;
     try {
-      await produceLanguage({ jobId: JOB, lang, generation: 1, fetchFn: fetchVia(b), sleep: noSleep });
+      await produceLanguage({ jobId: JOB, runner: RUNNER, lang, generation: 1, fetchFn: fetchVia(b), sleep: noSleep });
     } catch (e) {
       error = (e as Error).message;
     }
@@ -182,7 +182,7 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
     const c = makeCase("resume", 21);
     const full = backend(c.analysis);
     m.clear();
-    await produceLanguage({ jobId: JOB, lang: "de", generation: 1, fetchFn: fetchVia(full.b), sleep: noSleep });
+    await produceLanguage({ jobId: JOB, runner: RUNNER, lang: "de", generation: 1, fetchFn: fetchVia(full.b), sleep: noSleep });
     const all = m.requests.splice(0);
     const want = json(full.store, outputKey(USER, JOB, "de", 1, "inputs.json"));
 
@@ -191,10 +191,10 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
     const ac = new AbortController();
     let clips = 0;
     await expect(produceLanguage({
-      jobId: JOB, lang: "de", generation: 1, signal: ac.signal, sleep: noSleep,
+      jobId: JOB, runner: RUNNER, lang: "de", generation: 1, signal: ac.signal, sleep: noSleep,
       fetchFn: fetchVia(b, (path) => path.endsWith("/tts") && ++clips === 3 && ac.abort()),
     })).rejects.toThrow();
-    await produceLanguage({ jobId: JOB, lang: "de", generation: 1, fetchFn: fetchVia(b), sleep: noSleep });
+    await produceLanguage({ jobId: JOB, runner: RUNNER, lang: "de", generation: 1, fetchFn: fetchVia(b), sleep: noSleep });
     const again = m.requests.splice(0);
     expect(json(store, outputKey(USER, JOB, "de", 1, "inputs.json"))).toEqual(want);
     const bodies = (rs: typeof all, s: string) => sorted(rs.filter((r) => r.service === s).map((r) => r.body));
@@ -202,7 +202,7 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
     expect(bodies(again, "eleven")).toEqual(bodies(all, "eleven")); // each clip once
 
     // a second run (Try again, or the language asked for again): nothing paid, the same inputs
-    await produceLanguage({ jobId: JOB, lang: "de", generation: 2, fetchFn: fetchVia(b), sleep: noSleep });
+    await produceLanguage({ jobId: JOB, runner: RUNNER, lang: "de", generation: 2, fetchFn: fetchVia(b), sleep: noSleep });
     expect(m.requests.splice(0)).toEqual([]);
     expect(json(store, outputKey(USER, JOB, "de", 2, "inputs.json"))).toEqual(want);
   }, 300_000);
@@ -213,7 +213,7 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
       const waits: Waiting[] = [];
       const slept: number[] = [];
       try {
-        await produceLanguage({ jobId: JOB, lang, generation, fetchFn: fetchVia(backendOf.b), onWaiting: (w) => waits.push(w),
+        await produceLanguage({ jobId: JOB, runner: RUNNER, lang, generation, fetchFn: fetchVia(backendOf.b), onWaiting: (w) => waits.push(w),
                                 sleep: async (ms) => void slept.push(ms) });
         return { error: null, waits, slept };
       } catch (e) {
@@ -262,6 +262,14 @@ describe.skipIf(!ready)("lib/produce against vt.py", () => {
     const gone = backend(c.analysis, { es: 2 });
     r = await run("es", 1, gone);
     expect(r.error).toBeInstanceOf(RunGone);
+
+    // a run another browser holds (hold_run): stops before anything is paid for
+    m.clear();
+    const taken = backend(c.analysis);
+    taken.b.holder = () => "another-browser";
+    r = await run("ro", 1, taken);
+    expect(r.error).toBeInstanceOf(RunTaken);
+    expect(m.requests).toEqual([]);
   }, 300_000);
 });
 

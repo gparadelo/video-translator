@@ -42,7 +42,7 @@ async function produce() {
   const stages: string[] = [];
   let waits = 0;
   await produceLanguage({
-    jobId: "job-e2e", lang: "de", generation: 1,
+    jobId: "job-e2e", runner: "e2e-browser", lang: "de", generation: 1,
     onProgress: (p: ProduceProgress) => void (stages.at(-1) !== p.stage && stages.push(p.stage)),
     onWaiting: (w) => void (w && waits++),
   });
