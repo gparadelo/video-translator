@@ -16,7 +16,7 @@ export const limiterDelay = (sampleRate: number, attackMs = LIMITER.attackMs) =>
   Math.trunc((sampleRate * attackMs) / 1000) - 1;
 
 /** Limit mono samples (full scale 1). Returns a new array of the same length (the last `delay` samples drop off). */
-export function limit(input: Float64Array, sampleRate: number, opts = LIMITER): Float64Array {
+export function limit(input: Float32Array | Float64Array, sampleRate: number, opts = LIMITER): Float64Array {
   const D = limiterDelay(sampleRate, opts.attackMs);
   const A = D + 1; // the ramp length
   const n = input.length;
@@ -25,12 +25,13 @@ export function limit(input: Float64Array, sampleRate: number, opts = LIMITER): 
   const at = (m: number) => (m - D >= 0 && m - D < n ? input[m - D] : 0);
   // the gain each output sample may have at most: its own peak, and the ramps down to every coming peak
   const gain = new Float64Array(n).fill(1);
-  const req = new Float64Array(n).fill(1);
-  for (let m = 0; m < n; m++) {
+  const peakGain = (m: number) => {
     const p = Math.abs(at(m));
-    if (p <= lim) continue;
-    const g = lim / p;
-    req[m] = g;
+    return p > lim ? lim / p : 1;
+  };
+  for (let m = 0; m < n; m++) {
+    const g = peakGain(m);
+    if (g === 1) continue;
     const slope = (1 - g) / A;
     for (let k = 0; k <= A && m - k >= 0; k++) {
       const v = g + k * slope;
@@ -44,8 +45,9 @@ export function limit(input: Float64Array, sampleRate: number, opts = LIMITER): 
   let rise = 1;
   for (let m = 0; m < n; m++) {
     g = Math.min(gain[m], g + rise);
-    if (req[m] < 1 && g >= req[m]) {
-      g = req[m];
+    const req = peakGain(m);
+    if (req < 1 && g >= req) {
+      g = req;
       rise = (1 - g) / releaseSamples;
     }
     if (g > 1) g = 1;

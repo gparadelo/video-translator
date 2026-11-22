@@ -37,10 +37,12 @@ export function kWeighting(sampleRate: number) {
 }
 
 /**
- * Integrated loudness in LUFS of mono samples (full scale = 1). Returns -70 when no block is above the
- * absolute gate (what ffmpeg reports for silence).
+ * Integrated loudness in LUFS of mono samples (full scale = 1, or 1 / scale: 16-bit samples with scale 1 / 32768,
+ * which is exactly how ffmpeg reads them). Returns -70 when no block is above the absolute gate (what ffmpeg
+ * reports for silence).
  */
-export function integratedLoudness(samples: ArrayLike<number>, sampleRate: number, onBlock?: (loudness: number, power: number) => void): number {
+export function integratedLoudness(samples: ArrayLike<number>, sampleRate: number, onBlock?: (loudness: number, power: number) => void,
+                                   scale = 1): number {
   histEnergy ??= Float64Array.from({ length: HIST_SIZE }, (_, i) => energyOf(i / HIST_GRAIN + ABS_THRES));
   const { preB, preA, rlbB, rlbA } = kWeighting(sampleRate);
   const size = Math.trunc((sampleRate * 4) / 10); // 400 ms
@@ -58,7 +60,7 @@ export function integratedLoudness(samples: ArrayLike<number>, sampleRate: numbe
       pos = 0;
     }
     // two biquads in transposed direct form II, as ffmpeg runs them
-    const x = samples[i];
+    const x = samples[i] * scale;
     const y = preB[0] * x + y1;
     y1 = preB[1] * x + y2 - preA[1] * y;
     y2 = preB[2] * x - preA[2] * y;
@@ -92,6 +94,6 @@ export function integratedLoudness(samples: ArrayLike<number>, sampleRate: numbe
 }
 
 /** What vt.lufs reads from ffmpeg's summary ("I: -18.4 LUFS"): the integrated loudness with one decimal. */
-export const lufsOneDecimal = (samples: ArrayLike<number>, sampleRate: number) =>
-  Number(pyFormat(integratedLoudness(samples, sampleRate), 1));
+export const lufsOneDecimal = (samples: ArrayLike<number>, sampleRate: number, scale = 1) =>
+  Number(pyFormat(integratedLoudness(samples, sampleRate, undefined, scale), 1));
 

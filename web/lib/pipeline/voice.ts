@@ -52,14 +52,12 @@ export function buildVoice(beats: VoiceBeat[], clips: Float32Array[], totalFrame
     for (let k = 0; k < n; k++) pcm[at + k] = toS16(part[k]); // later beats overwrite, as in vt.py
   });
 
-  // loudness of the plain mix (ebur128 reads the 16-bit samples as doubles)
-  const plain = new Float64Array(length);
-  for (let k = 0; k < length; k++) plain[k] = pcm[k] / 32768;
-  const measured = lufsOneDecimal(plain, SR);
+  // loudness of the plain mix (ebur128 reads the 16-bit samples as doubles: x / 32768)
+  const measured = lufsOneDecimal(pcm, SR, 1 / 32768);
   const gainDb = Number(pyFormat(baseLufs - measured, 2)); // vt.voice_filter writes it with 2 decimals
   const vol = volumeOf(gainDb);
   // volume works in float: s16 -> float, times the float volume
-  const loud = new Float64Array(length);
+  const loud = new Float32Array(length); // float values: no precision lost
   for (let k = 0; k < length; k++) loud[k] = Math.fround(Math.fround(pcm[k] / 32768) * vol);
   const limited = limit(loud, SR, LIMITER);
   // vt.py ends the file with `-t <total, 4 decimals>`: whole microseconds, to the nearest sample
