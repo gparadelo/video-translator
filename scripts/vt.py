@@ -1166,6 +1166,26 @@ def portable_plan(plan: dict, source_size: tuple[int, int]) -> dict:
             "voice": {"file": "voice.wav", "sample_rate": SR, "channels": 2}}
 
 
+ANALYSIS_FORMAT = 1  # web/lib/produce/analysis.ts reads this; see "Files in storage" in docs/web-setup.md
+
+
+def portable_analysis(A: dict, source_size: tuple[int, int]) -> dict:
+    """analysis.json as the web app keeps it in storage (u/<user>/<job>/analysis.json, written by the worker):
+    what the web app translates, voices and fits each language from, without this Mac's paths. `source_size`
+    is vt.video_size of the video (rotation applied)."""
+    v = A["video"]
+    return {
+        "format": ANALYSIS_FORMAT, "base_lang": A["base_lang"],
+        "video": {"dur": v["dur"], "fps": v["fps"]},
+        "source": {"width": source_size[0], "height": source_size[1]},
+        "speech_start": A["speech_start"], "speech_end": A["speech_end"], "base_lufs": A["base_lufs"],
+        "beats": [{k: b[k] for k in ("id", "text", "marked", "dur", "pause_after")} for b in A["beats"]],
+        "tokens": [{"beat": t["beat"]} for t in A["tokens"]],
+        "anchors": A["anchors"],
+        "warnings": A.get("warnings", []),
+    }
+
+
 INPUTS_FORMAT = 1  # web/lib/pipeline/inputs.ts reads this; see "Files in storage" in docs/web-setup.md
 FIT_KEYS = ("video_speed_min", "video_speed_max", "trim_keep_min", "audio_tempo_min", "audio_tempo_max",
             "sync_tolerance", "pause_min", "pause_max_extra")
@@ -1185,7 +1205,7 @@ def plan_inputs(P, A, lang: str, cfg: dict) -> tuple[dict, list[Path]]:
     v = A["video"]
     inputs = {
         "format": INPUTS_FORMAT, "lang": lang, "voice_id": voice_for(lang, cfg),
-        "analysis": {
+        "analysis": {  # what portable_analysis has, but the texts (web/lib/produce/analysis.ts: inputsAnalysis)
             "video": {"dur": v["dur"], "fps": v["fps"]},
             "source": dict(zip(("width", "height"), video_size(Path(v["path"])))),
             "speech_start": A["speech_start"], "speech_end": A["speech_end"], "base_lufs": A["base_lufs"],

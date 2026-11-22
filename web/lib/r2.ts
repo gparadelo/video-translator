@@ -1,4 +1,11 @@
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Cloudflare R2 speaks the S3 API. Videos never pass through this server: the browser uploads to and
@@ -58,6 +65,43 @@ export async function readText(key: string, maxBytes = 2_000_000): Promise<strin
     if (status === 404 || (e as { name?: string }).name === "NoSuchKey") return null;
     throw e;
   }
+}
+
+const notFound = (e: unknown) => {
+  const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+  return status === 404 || (e as { name?: string }).name === "NoSuchKey";
+};
+
+/** A small object's bytes, read here on the server, or null when it isn't there. Refuses anything over maxBytes. */
+export async function readBytes(key: string, maxBytes: number): Promise<Uint8Array | null> {
+  try {
+    const obj = await r2().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+    if ((obj.ContentLength ?? 0) > maxBytes) throw new Error(`${key} is too big to read here`);
+    return (await obj.Body?.transformToByteArray()) ?? null;
+  } catch (e) {
+    if (notFound(e)) return null;
+    throw e;
+  }
+}
+
+/** Write a small object from the server (the produce steps: translations, voice clips, plan inputs). */
+export async function putObject(key: string, body: Uint8Array | string, contentType: string) {
+  await r2().send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: body, ContentType: contentType }));
+}
+
+/** Copy an object inside the bucket (nothing passes through this server). False when `from` isn't there. */
+export async function copyObject(from: string, to: string): Promise<boolean> {
+  try {
+    await r2().send(new CopyObjectCommand({ Bucket: bucket(), Key: to, CopySource: `${bucket()}/${encodeURIComponent(from).replace(/%2F/g, "/")}` }));
+    return true;
+  } catch (e) {
+    if (notFound(e)) return false;
+    throw e;
+  }
+}
+
+export async function deleteObject(key: string) {
+  await r2().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
 }
 
 /** Size of an object in bytes, or null when it isn't there. */

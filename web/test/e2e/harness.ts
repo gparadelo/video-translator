@@ -1,12 +1,14 @@
-// Runs in a real browser (test/e2e/run.mjs) with the same code the job page uses: builds the fixture jobs' timing
-// plans and voice tracks from their plan inputs (lib/pipeline, the clips decoded by this browser), renders the
-// "flat" job from what it built, reading the source with range requests from the test server, and posts
-// everything back to it.
+// Runs in a real browser (test/e2e/run.mjs) with the same code the job page uses: makes the "produced" job's
+// language through the produce routes (lib/produce/run.ts; the test server answers them with lib/produce/steps.ts
+// and the fake Claude and ElevenLabs), builds the fixture jobs' timing plans and voice tracks from their plan
+// inputs (lib/pipeline, the clips decoded by this browser), renders the "flat" and "produced" jobs from what it
+// built, reading the source with range requests from the test server, and posts everything back to it.
 
 import { BufferTarget, StreamTarget, type Target } from "mediabunny";
 import { buildLanguage } from "../../lib/pipeline/build";
 import { metaFile, parseClipMeta, parseInputs } from "../../lib/pipeline/inputs";
 import { decodeMp3 } from "../../lib/pipeline/run";
+import { produceLanguage, type ProduceProgress } from "../../lib/produce/run";
 import { checkVoice, parsePlan, sourceSize, type RenderPlan } from "../../lib/render/plan";
 import { previewQuality, qualityOptions, type QualityId } from "../../lib/render/quality";
 import { canEncodeVoice, findEncoder, measureSpeed, missingApis, openSource, renderPlan } from "../../lib/render/render";
@@ -34,9 +36,22 @@ async function build(name: string) {
   return { ms: performance.now() - t0, seconds: b.seconds };
 }
 
-function flat() {
-  const b = built.get("flat");
-  if (!b) throw new Error("build the flat job first");
+/** The approved "produced" job's language, made as the job page makes it (until it is voiced). */
+async function produce() {
+  const t0 = performance.now();
+  const stages: string[] = [];
+  let waits = 0;
+  await produceLanguage({
+    jobId: "job-e2e", runner: "e2e-browser", lang: "de", generation: 1,
+    onProgress: (p: ProduceProgress) => void (stages.at(-1) !== p.stage && stages.push(p.stage)),
+    onWaiting: (w) => void (w && waits++),
+  });
+  return { ms: performance.now() - t0, stages, waits };
+}
+
+function flat(name = "flat") {
+  const b = built.get(name);
+  if (!b) throw new Error(`build the ${name} job first`);
   return b;
 }
 
@@ -56,11 +71,11 @@ function fileLikeTarget() {
   return { target, bytes };
 }
 
-async function run(mode: Mode) {
+async function run(mode: Mode, name = "flat") {
   const missing = missingApis();
   if (missing) throw new Error(`missing ${missing}`);
   if (!(await canEncodeVoice())) throw new Error("no AAC encoder");
-  const { plan, voice } = flat();
+  const { plan, voice } = flat(name);
   const source = await openSource(new URL("/files/source.mp4", location.href).href);
   try {
     const [w, h] = sourceSize(plan, source.width, source.height);
@@ -92,7 +107,7 @@ async function run(mode: Mode) {
     const ms = performance.now() - t0;
     clearInterval(sampler);
     const out = bytes();
-    await fetch(`/save/${mode}.mp4`, { method: "POST", body: out });
+    await fetch(`/save/${name === "flat" ? mode : `${name}-${mode}`}.mp4`, { method: "POST", body: out });
     return {
       mode, ...r, ms, bytes: out.length, encoder, size: [w, h], progressCalls,
       estimatedMs: speed[0] * plan.total_frames * 1000, peakHeapMB: Math.max(0, ...heap) / 1e6,
@@ -138,5 +153,5 @@ async function runSave(stopAfterMs?: number) {
   }
 }
 
-Object.assign(window, { runBuild: build, runE2E: run, runSave });
+Object.assign(window, { runProduce: produce, runBuild: build, runE2E: run, runSave });
 document.title = "ready";

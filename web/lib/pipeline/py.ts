@@ -61,3 +61,79 @@ export function stripMarkers(s: string): { clean: string[]; marks: Map<number, n
   clean.push(...Array.from(s.slice(pos)));
   return { clean, marks };
 }
+
+const PY_STRIP = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "gu");
+
+/** Python's str.strip() (no arguments): whitespace as str.isspace() has it, from both ends. */
+export const pyStrip = (s: string) => s.replace(PY_STRIP, "");
+
+/** Python's len(str): code points, not UTF-16 units. */
+export const pyLen = (s: string) => Array.from(s).length;
+
+/** Python's repr(float) (and str(float)): the shortest digits that read back the same, "1.0" for whole numbers. */
+export function pyFloatRepr(x: number): string {
+  if (Number.isNaN(x)) return "nan";
+  if (!Number.isFinite(x)) return x > 0 ? "inf" : "-inf";
+  if (x === 0) return Object.is(x, -0) ? "-0.0" : "0.0";
+  const sign = x < 0 ? "-" : "";
+  const [mant, e] = Math.abs(x).toExponential().split("e"); // the shortest round-trip digits, like Python's
+  const digits = mant.replace(".", "");
+  const exp = Number(e);
+  if (exp < -4 || exp > 15) {
+    const m = digits.length > 1 ? `${digits[0]}.${digits.slice(1)}` : digits;
+    return `${sign}${m}e${exp < 0 ? "-" : "+"}${String(Math.abs(exp)).padStart(2, "0")}`;
+  }
+  if (exp < 0) return `${sign}0.${"0".repeat(-exp - 1)}${digits}`;
+  if (digits.length <= exp + 1) return `${sign}${digits}${"0".repeat(exp + 1 - digits.length)}.0`;
+  return `${sign}${digits.slice(0, exp + 1)}.${digits.slice(exp + 1)}`;
+}
+
+/** Python's round(x, digits) for a float: the exact value rounded half to even, as f"{x:.{digits}f}" does. */
+export const pyRoundTo = (x: number, digits: number) => Number(pyFormat(x, digits));
+
+/** A JSON string as Python's json.dumps writes it with ensure_ascii (the default): all but printable ASCII escaped. */
+function pyJsonString(s: string): string {
+  let out = '"';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    const ch = s[i];
+    if (ch === '"') out += '\\"';
+    else if (ch === "\\") out += "\\\\";
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (ch === "\b") out += "\\b";
+    else if (ch === "\f") out += "\\f";
+    else if (c < 0x20 || c > 0x7e) out += `\\u${c.toString(16).padStart(4, "0")}`; // UTF-16 units: pairs as two, like Python
+    else out += ch;
+  }
+  return out + '"';
+}
+
+/**
+ * Python's json.dumps(value, sort_keys=True) with its default separators (", " and ": "). Every number is
+ * written as a Python float (repr), so use it only where the Python side has floats: vt.tts_beat's cache key,
+ * where the voice settings and the speed are floats.
+ */
+export function pyJsonDumps(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (value === true) return "true";
+  if (value === false) return "false";
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "NaN";
+    if (!Number.isFinite(value)) return value > 0 ? "Infinity" : "-Infinity";
+    return pyFloatRepr(value);
+  }
+  if (typeof value === "string") return pyJsonString(value);
+  if (Array.isArray(value)) return `[${value.map(pyJsonDumps).join(", ")}]`;
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    // sort_keys orders by code point; JS's sort compares UTF-16 units (the same for the ASCII keys used here)
+    const keys = Object.keys(o).filter((k) => o[k] !== undefined).sort();
+    return `{${keys.map((k) => `${pyJsonString(k)}: ${pyJsonDumps(o[k])}`).join(", ")}}`;
+  }
+  throw new Error(`can't write ${typeof value} as JSON`);
+}
+
+/** Python's repr of a list of ints: "[1, 2, 3]". */
+export const pyIntList = (xs: number[]) => `[${xs.join(", ")}]`;

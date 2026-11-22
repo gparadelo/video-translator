@@ -29,9 +29,20 @@ the browser. A project's title is translated with the person's own Claude key
 (`app/api/jobs/[id]/title/route.ts`, `lib/translate-title.ts`) into the project's languages as plain
 ASCII titles of at most 60 characters. A project has a video, a title, or both.
 
+## Translating and voicing
+
+The worker on the Mac only transcribes and times the original voiceover (`analysis.json`). After the person
+approves the transcript, the job page makes each language (`components/ProduceOutput.tsx`,
+`lib/produce/run.ts`) through short routes that run on the person's own keys
+(`app/api/jobs/[id]/produce/[lang]/{translate,tts,fit}`, `lib/produce/steps.ts`): Claude translates and rewrites
+the beats that don't fit, ElevenLabs voices one beat per call, every step is saved in R2, and a closed tab
+carries on where it stopped. It's a port of `scripts/vt.py`'s produce loop (same prompts, request bodies and
+cache keys; `test/produce-parity.test.ts`). Then the page builds the timing plan and the voice track
+(`lib/pipeline`) and renders.
+
 ## Rendering in the browser
 
-The worker on the Mac makes each language's timing plan and voice track; the video is rendered on the job
+The video is rendered on the job
 page, in the person's browser (`lib/render`, WebCodecs + [Mediabunny](https://mediabunny.dev)). The source
 is read from R2 in pieces, one decoded frame is held at a time, and each clip gets exactly the frames
 `scripts/vt.py`'s ffmpeg command would give it (`lib/render/frames.ts`). The page first makes a 720p preview
@@ -42,8 +53,8 @@ Chrome and Edge work best; other browsers are told so. Files and formats: "Files
 ## Tests
 
 ```bash
-pnpm test   # unit tests + frame selection checked against ffmpeg (needs ffmpeg and uv)
-pnpm e2e    # renders a fake job in headless Chrome and compares it with the CLI render
+pnpm test   # unit tests + checks against ffmpeg and vt.py, with fake Claude/ElevenLabs (needs ffmpeg and uv)
+pnpm e2e    # in headless Chrome: produces, builds and renders fake jobs and compares them with vt.py and the CLI
 ```
 
 ## Learn More

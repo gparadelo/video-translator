@@ -6,14 +6,14 @@
 """
 worker.py - does the web app's jobs on this Mac.
 
-It only makes outgoing connections: it asks the database for work, downloads the video from storage,
-runs the pipeline in scripts/vt.py up to the recorded voice (translation, TTS, and the timing plan, so Claude can
-rewrite beats that don't fit), and uploads, per language, the plan inputs: the TTS clips and inputs.json. The
-person's browser builds the timing plan and the voice track from them (web/lib/pipeline) and renders the video
-(web/lib/render).
+It only makes outgoing connections: it asks the database for work, downloads the video from storage, and
+analyzes it with scripts/vt.py: transcribes the voiceover and fixes the spelling of names (prepare), times every
+word and ties every cut to one, and does the timing again after the person edited the transcript (align). It
+uploads the result as analysis.json. Everything after that (translation, voice, timing plan, render) happens in
+the web app and the person's browser (web/lib/produce, web/lib/pipeline, web/lib/render).
 
-Every job runs on its owner's own ElevenLabs and Claude keys and voice, saved in the web app's Settings
-(encrypted; SECRETS_KEY opens them). The worker has no keys of its own, so nobody's job is billed to anyone else.
+Every job runs on its owner's own ElevenLabs and Claude keys, saved in the web app's Settings (encrypted;
+SECRETS_KEY opens them). The worker has no keys of its own, so nobody's job is billed to anyone else.
 
   uv run worker/worker.py            # run until stopped
   uv run worker/worker.py --once     # do the jobs that are waiting, then exit
@@ -43,10 +43,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 import vt  # noqa: E402
 
-VERSION = "3"            # 3: uploads the plan inputs (TTS clips + inputs.json); the browser builds the rest
+VERSION = "4"            # 4: only analyzes (prepare, align) and uploads analysis.json; the web app does the rest
 POLL_SECONDS = 10        # how often to ask for work when idle (this also tells the app "I'm online")
 LEASE_SECONDS = 120      # a job whose worker is silent this long goes back to the queue
-KEEP_DAYS = 7            # job folders are kept this long, so re-running a language reuses the voice audio
+KEEP_DAYS = 7            # job folders are kept this long, so timing an edited transcript again is quick
 
 
 def say(msg: str):
@@ -124,12 +124,6 @@ class Database:
         if r.status_code >= 400:
             raise RuntimeError(f"{fn} failed ({r.status_code}): {r.text[:300]}")
         return r.json() if r.content else None
-
-    def profile(self, user_id: str) -> dict:
-        r = self.send("GET", "/rest/v1/profiles", params={"id": f"eq.{user_id}", "select": "voice_id,voice_ids"})
-        r.raise_for_status()
-        rows = r.json()
-        return rows[0] if rows else {}
 
     def secrets(self, user_id: str) -> dict:
         r = self.send("GET", "/rest/v1/user_secrets",
@@ -258,20 +252,10 @@ class Job:
             say(f"  downloading the video ({(self.row.get('source_bytes') or 0) / 1e6:.0f} MB)...")
             self.store.download(self.row["source_key"], dest, self.transfer("download"))
             self.beat.check()
-        # Per-job settings for vt.py: this person's languages and voice. Every language gets its voice spelled
-        # out, so nothing in a config.toml in the worker's folder (merged under job.toml) can pick another voice.
-        # A language keeps the voice it had when this job was first produced (jobs.voices: every language not
-        # pinned yet is pinned now, before any is voiced), whatever Settings say now.
+        # Per-job settings for vt.py: this person's languages. (The voice is the web app's business now: it pins
+        # each language's voice when it starts translating.)
         langs = self.row.get("languages") or []
-        per_lang = self.prof.get("voice_ids") or {}
-        voices = {l: per_lang.get(l) or self.prof["voice_id"] for l in langs}
-        if self.row["status"] == "producing":
-            voices = {**voices, **self.db.rpc("worker_pin_voices", p_worker=self.worker_id, p_job=self.id,
-                                              p_voices=voices)}
-        lines = [f"languages = {json.dumps(langs)}", "[elevenlabs]",
-                 f"voice_id = {json.dumps(self.prof['voice_id'])}",
-                 "voice_ids = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in voices.items()) + " }"]
-        (self.dir / "job.toml").write_text("\n".join(lines) + "\n")
+        (self.dir / "job.toml").write_text(f"languages = {json.dumps(langs)}\n")
 
     def use_owner_keys(self):
         """This job runs on its owner's keys (Settings in the web app), and only on those."""
@@ -287,73 +271,56 @@ class Job:
             raise vt.VTError("add your ElevenLabs API key in Settings, then try again")
         if not claude:
             raise vt.VTError("add your Claude API key in Settings, then try again")
-        self.prof = self.db.profile(uid)  # checked here, before downloading the video
-        if not self.prof.get("voice_id"):
-            raise vt.VTError("choose your ElevenLabs voice in Settings, then try again")
         vt.use_keys(ELEVENLABS_API_KEY=eleven, ANTHROPIC_API_KEY=claude)
 
-    # --- the two halves ---------------------------------------------------------------------
+    # --- the worker's part of a job ---------------------------------------------------------
 
     def prepare(self):
         if self.row.get("reference"):
             (self.dir / "reference.txt").write_text(self.row["reference"])
         r = vt.prepare(self.dir, self.row.get("base_lang"))
+        self.upload_analysis()
         self.db.rpc("worker_prepared", p_worker=self.worker_id, p_job=self.id, p_base_lang=r["base_lang"],
                     p_script="\n\n".join(r["beats"]), p_names_fixed=r["names_fixed"], p_warnings=r["warnings"])
         say("  ready for review")
 
-    def produce(self):
-        script = self.dir / "script.txt"
+    def align(self):
+        """The person approved an edited transcript (or one an older worker timed): time it again, as vt.produce
+        does before translating, and hand it to the web app, which translates it from there."""
+        P = vt.job_paths(self.dir)
         wanted = vt.split_beats(self.row.get("script") or "")
-        if wanted and (not script.exists() or vt.split_beats(script.read_text()) != wanted):
-            script.write_text("\n\n".join(wanted) + "\n")  # the person's edits from the review step
-        if not (self.dir / "work" / "analysis.json").exists():  # e.g. the folder was cleaned up since
-            vt.prepare(self.dir, self.row.get("base_lang"))
+        if not wanted:
+            raise vt.VTError("the transcript is empty")
+        if not P["script"].exists() or vt.split_beats(P["script"].read_text()) != wanted:
+            P["script"].write_text("\n\n".join(wanted) + "\n")  # the person's edits from the review step
+        had_warnings = bool(self.row.get("warnings"))
+        if P["analysis"].exists():
+            A = vt.load_analysis(P)
+            had_warnings = had_warnings or bool(A.get("warnings"))
+            stale = vt.analysis_stale(P, A)
+        else:  # the folder was cleaned up since, or an older worker prepared it
+            A, stale = None, True
+        if stale:
+            vt.log("timing the transcript...", stage="align")
+            A = vt.cmd_analyze(argparse.Namespace(job=str(P["job"]), lang=self.row.get("base_lang")))
+        ok = not (A["warnings"] and not had_warnings)  # stop before paying for voices on a bad alignment
+        warnings = A["warnings"] if ok else [
+            "After your edits, the transcript no longer matches the voiceover: " + " ".join(A["warnings"]) +
+            " Only fix spelling; the words have to stay as spoken."]
+        self.upload_analysis()
+        self.db.rpc("worker_aligned", p_worker=self.worker_id, p_job=self.id,
+                    p_script="\n\n".join(b["text"] for b in A["beats"]), p_warnings=warnings, p_ok=ok)
+        say("  timed: the web app translates it now" if ok else "  the edits broke the timing: back to review")
 
-        langs = [l for l in self.row.get("languages") or [] if l != self.row.get("base_lang")]
-        if not langs:
-            raise vt.VTError("no languages to translate into")
-        errors, done = [], 0
-        for lang in langs:
-            self.beat.check()
-            gen = self.output(lang, "running")  # a new run of this language: its files go under g<gen>/
-            try:
-                # one language at a time, so a problem with one doesn't stop the others. The plan is still
-                # made here (vt.py), because Claude rewrites the beats that don't fit; the browser then builds
-                # the same plan and the voice track from the inputs uploaded below.
-                vt.produce(self.dir, [lang], render=False)
-                self.upload_inputs(lang, gen)
-            except vt.VTError as e:
-                say(f"  {lang} failed: {e}")
-                errors.append(f"{lang}: {e}")
-                self.output(lang, "failed", p_flags=[str(e)], p_generation=gen)
-                continue
-            self.output(lang, "voiced", p_generation=gen)
-            done += 1
-        # every language failed -> the job failed; some failed -> done, with those marked failed
-        self.finish(None if done else errors[0])
-
-    def upload_inputs(self, lang: str, gen: int):
-        """What the browser builds the plan and the voice track from (web/lib/pipeline): the TTS clips with their
-        timing, then inputs.json (vt.plan_inputs), last, so it only exists once everything it names is there.
+    def upload_analysis(self):
+        """analysis.json (vt.portable_analysis): what the web app translates, voices and fits each language from.
         See "Files in storage" in docs/web-setup.md."""
         P = vt.job_paths(self.dir)
         A = vt.load_analysis(P)
-        inputs, files = vt.plan_inputs(P, A, lang, vt.config(P["job"]))
-        base = f"u/{self.row['user_id']}/{self.id}/out/{lang}/g{gen}"
-        say(f"  {lang}: uploading the voice ({sum(f.stat().st_size for f in files) / 1e6:.1f} MB)...")
-        for f in files:
-            kind = "audio/mpeg" if f.suffix == ".mp3" else "application/json"
-            self.store.upload(f, f"{base}/tts/{f.name}", kind, self.transfer("upload", lang))
-            self.beat.check()
-        path = P["work"] / lang / "inputs.json"
-        path.write_text(json.dumps(inputs, ensure_ascii=False, indent=1))
-        self.store.upload(path, f"{base}/inputs.json", "application/json", self.transfer("upload", lang))
-
-    def output(self, lang: str, status: str, **fields) -> int:
-        """Record a language's state; returns its run number (generation)."""
-        return self.db.rpc("worker_output", p_worker=self.worker_id, p_job=self.id, p_lang=lang, p_status=status,
-                           **fields)
+        path = P["work"] / "analysis_web.json"
+        path.write_text(json.dumps(vt.portable_analysis(A, vt.video_size(P["base"])), ensure_ascii=False, indent=1))
+        self.store.upload(path, f"u/{self.row['user_id']}/{self.id}/analysis.json", "application/json",
+                          self.transfer("upload"))
 
     def finish(self, error: str | None):
         for attempt in range(5):  # the result must reach the database, or the job would be redone
@@ -377,8 +344,7 @@ class Job:
             if self.row["status"] == "preparing":
                 self.prepare()
             else:
-                self.produce()
-                say("  finished")
+                self.align()
         except Canceled:
             say("  canceled - stopped working on it")
         except vt.VTError as e:

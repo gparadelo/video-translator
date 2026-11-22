@@ -6,7 +6,8 @@ import { langName, type Job, type Output } from "@/lib/jobs";
 import { useRenderGuard } from "@/lib/render/guard";
 import type { BuildProgress } from "@/lib/pipeline/run";
 
-// A language whose voice the worker recorded: this tab builds its timing plan and voice track (lib/pipeline)
+// A language whose voice is recorded (voiced: by the produce steps, or an older worker): this tab builds its
+// timing plan and voice track (lib/pipeline)
 // and uploads them; the card then becomes the render card (ReadyOutput). It starts by itself, and starts
 // again whenever the page is opened while the language is still waiting, so a closed tab never leaves it stuck.
 

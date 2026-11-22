@@ -8,18 +8,24 @@
 //      range requests, and checks every output frame shows the same source frame as the CLI render, and that
 //      the voice lines up. The "stretched" job (a beat's tempo isn't 1: WSOLA here, atempo in vt.py) is checked
 //      beat by beat in step 2.
+//   4. an approved job, all the way: in Chrome, the job page's produce code (lib/produce/run.ts) translates,
+//      voices and fits its language through the produce routes (served here by lib/produce/steps.ts, with the
+//      fake Claude and ElevenLabs of test/mocks.mjs) until it is voiced; its plan inputs must be vt.py's (vt.produce
+//      against the same fakes), then the browser builds its plan and voice and renders it, checked against the
+//      CLI render of vt.py's.
 //
 //   pnpm e2e [--size 1080x1920] [--rate 30] [--modes preview,original,720p] [--chrome /path/to/chrome] [--headed]
 //
 // Needs ffmpeg, uv and Chrome (CHROME_PATH or --chrome; defaults to the usual macOS location).
 
-import { execFileSync } from "node:child_process";
-import { createReadStream, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { chromium } from "playwright-core";
 import { createServer } from "vite";
+import { startMocks } from "../mocks.mjs";
 
 const here = resolve(import.meta.dirname);
 const { values: opt } = parseArgs({
@@ -54,15 +60,74 @@ for (const [name, j] of Object.entries(jobs)) {
 }
 const ranges = [];
 
+// 4: the approved job, prepared on the same video as the others; vt.py produces it against the fakes (they answer
+// from this process, so vt.py runs without blocking it) and renders it with the CLI as the reference
+const mocks = await startMocks();
+const pyAsync = (script, ...args) => new Promise((res, rej) =>
+  execFile("uv", ["run", "-q", "--no-project", "--with", "requests", "--with", "anthropic", "python", join(here, "..", script), ...args],
+           { encoding: "utf8", maxBuffer: 1 << 26 }, (e, out, err) => (e ? rej(new Error(`${e.message}\n${err}`)) : res(out))));
+const fps = JSON.parse(readFileSync(jobs.flat.inputs, "utf8")).analysis.video.fps;
+// a job where Claude rewrote beats, and, if one of the first few seeds gives it, every beat ends at tempo 1 (so
+// the render's voice can be compared sample for sample with the CLI's; a stretched beat is compared by level)
+let producedCase, vtProduced, vtRequests;
+for (let seed = 1; ; seed++) {
+  let c;
+  try {
+    c = JSON.parse(await pyAsync("produce_fixture.py", "case", join(dir, `produced${seed}`), "--seed", String(seed),
+                                 "--video", jobs.flat.source, "--size", opt.size, "--dur", "12", "--fps", String(fps)));
+  } catch (e) {
+    if (seed > 30 || !/doesn't fit/.test(e.message)) throw e;
+    continue;
+  }
+  mocks.clear();
+  const r = JSON.parse(await pyAsync("produce_fixture.py", "produce", c.job, "de", "--claude", mocks.claudeUrl,
+                                     "--eleven", mocks.elevenUrl, "--render"));
+  const reqs = mocks.requests.splice(0);
+  const rewrote = reqs.some((q) => q.service === "claude" && q.body.messages[0].content.startsWith("Here is the original"));
+  const flat = r.plan && JSON.parse(readFileSync(r.plan, "utf8")).beats.every((b) => b.tempo === 1);
+  if (r.plan && rewrote && (flat || !producedCase)) [producedCase, vtProduced, vtRequests] = [c, r, reqs];
+  if ((r.plan && rewrote && flat) || (producedCase && seed >= 12) || seed > 30) break;
+}
+if (!producedCase) throw new Error("no seed made a job where Claude rewrote beats");
+const store = join(dir, "store");
+const PRODUCED = { userId: "user-e2e", jobId: "job-e2e", voice: "voice123456789" };
+const runFolder = join(store, "u", PRODUCED.userId, PRODUCED.jobId, "out", "de", "g1");
+mkdirSync(join(store, "u", PRODUCED.userId, PRODUCED.jobId), { recursive: true });
+copyFileSync(producedCase.analysis, join(store, "u", PRODUCED.userId, PRODUCED.jobId, "analysis.json")); // the worker's upload
+mocks.clear();
+
 // Serves the fixture files with HTTP range support (like R2) and takes the browser's files back.
 const fixtureFiles = {
   name: "fixture-files",
   configureServer(server) {
+    let backend = null;
     server.middlewares.use((req, res, next) => {
       const url = new URL(req.url, "http://x");
       if (url.pathname === "/favicon.ico") return void (res.statusCode = 204, res.end());
+      // the produce routes of the "produced" job, as app/api/jobs/<id>/produce/<lang>/* answer them
+      if (url.pathname.startsWith(`/api/jobs/${PRODUCED.jobId}/produce/`) && req.method === "POST") {
+        const parts = [];
+        req.on("data", (c) => parts.push(c));
+        req.on("end", async () => {
+          try {
+            const h = await server.ssrLoadModule(resolve(here, "..", "produce-harness.ts"));
+            backend ??= h.folderBackend({ root: store, ...PRODUCED, claudeUrl: mocks.claudeUrl, elevenUrl: mocks.elevenUrl });
+            const { status, json } = await h.handleStep(backend.b, url.pathname, JSON.parse(Buffer.concat(parts).toString() || "{}"));
+            res.statusCode = status;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify(json));
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: String(e) }));
+          }
+        });
+        return;
+      }
       if (url.pathname.startsWith("/files/")) {
-        const path = files[url.pathname.slice(7)];
+        const rel = url.pathname.slice(7);
+        // what the produce routes wrote for the "produced" job's run (the store is R2 here)
+        const path = files[rel] ?? (rel.startsWith("produced/") && !rel.includes("..") && existsSync(join(runFolder, rel.slice(9)))
+          ? join(runFolder, rel.slice(9)) : null);
         if (!path) return void (res.statusCode = 404, res.end());
         const size = statSync(path).size;
         const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? "");
@@ -216,7 +281,47 @@ try {
     "download: same frames as vt.py": saved.same && saved.frames === plan.total_frames,
     "stopped render: nothing left behind": stop.stopped && stop.leftovers.length === 0,
   });
+
+  // 4. the approved job: produced in the browser through the produce routes, then built and rendered
+  const p = await page.evaluate(() => window.runProduce());
+  const ours = mocks.requests.splice(0);
+  const bodies = (rs, s) => rs.filter((r) => r.service === s).map((r) => JSON.stringify(r.body)).sort();
+  const inputsDiffs = jsonDiffs(JSON.parse(readFileSync(join(runFolder, "inputs.json"), "utf8")), vtProduced.inputs);
+  const claudeCalls = ours.filter((r) => r.service === "claude").length;
+  console.log(`\nproduced "de" in the browser in ${(p.ms / 1000).toFixed(1)} s: ${p.stages.join(" -> ")}; ` +
+    `${claudeCalls} Claude calls, ${ours.length - claudeCalls} ElevenLabs calls; ${vtProduced.flags.length} flags left`);
+  if (inputsDiffs.length) console.log(`  first differences: ${inputsDiffs.slice(0, 5).join("; ")}`);
+  const pj = { inputs: vtProduced.inputs_path, plan: vtProduced.plan };
+  const pb = await page.evaluate(() => window.runBuild("produced"));
+  const planDiffs = jsonDiffs(JSON.parse(readFileSync(join(dir, "produced-plan.json"), "utf8")), JSON.parse(readFileSync(pj.plan, "utf8")));
+  const pv = voiceParity("produced", pj);
+  const pplan = JSON.parse(readFileSync(join(dir, "produced-plan.json"), "utf8"));
+  const pr = await page.evaluate(() => window.runE2E("preview", "produced"));
+  const pc = JSON.parse(py("vt_fixture.py", "compare", join(dir, "produced-preview.mp4"), vtProduced.reference));
+  const stretched = pplan.beats.some((b) => b.tempo !== 1);
+  console.log(`  built: ${pb.seconds.toFixed(2)} s; voice max diff ${pv.maxDiff} outside stretched beats` +
+    (pv.levels.length ? `, stretched beats ${pv.levels.map((l) => l.toFixed(2)).join(", ")} dB` : "") +
+    `; preview ${pc.frames} frames, audio offset ${pc.audio_offset}, relative error ${pc.audio_rel_error.toExponential(2)}`);
+  const claudeDiffs = jsonDiffs(ours.filter((r) => r.service === "claude").map((r) => r.body),
+                                vtRequests.filter((r) => r.service === "claude").map((r) => r.body));
+  if (claudeDiffs.length) console.log(`  Claude requests differ: ${claudeDiffs.slice(0, 3).join("; ")}`);
+  // with a stretched beat (WSOLA here, atempo in vt.py) the voice was compared beat by beat when it was built
+  if (stretched) console.log("  (a beat is stretched: the render's voice isn't compared sample for sample with the CLI's)");
+  report({
+    "produced: the same Claude requests as vt.py, in order": claudeDiffs.length === 0 && claudeCalls > 0,
+    "produced: the same ElevenLabs requests as vt.py": JSON.stringify(bodies(ours, "eleven")) === JSON.stringify(bodies(vtRequests, "eleven")),
+    "produced: Claude rewrote beats": ours.some((r) => r.service === "claude" && r.body.messages[0].content.startsWith("Here is the original")),
+    "produced: inputs.json as vt.plan_inputs": inputsDiffs.length === 0,
+    "produced: plan.json as vt.py's": planDiffs.length === 0,
+    "produced: voice.wav as long as vt.py's": pv.sameLength,
+    "produced: voice samples as vt.py's (within 2)": pv.maxDiff <= 2,
+    "produced: stretched beats at vt.py's level (0.5 dB)": pv.levels.every((l) => Math.abs(l) < 0.5),
+    "produced: preview has every frame, the same as vt.py's": pc.same && pc.frames === pplan.total_frames && pr.encoded === pplan.total_frames,
+    "produced: voice lined up (within 1 sample)": stretched || Math.abs(pc.audio_offset) <= 1,
+    "produced: voice matches (AAC noise only)": stretched || pc.audio_rel_error < 0.01,
+  });
 } finally {
+  await mocks.close();
   await browser.close();
   await server.close();
   if (!opt.keep && !failed) rmSync(dir, { recursive: true, force: true });
