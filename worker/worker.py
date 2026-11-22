@@ -393,6 +393,11 @@ def main():
     ap.add_argument("--once", action="store_true", help="do the waiting jobs, then exit")
     a = ap.parse_args()
     say(RETIRED)  # nothing hands it work any more (phase 5 deletes this file)
+    if not a.once and not sys.stdout.isatty():
+        # started by launchd (install-service.sh, KeepAlive): exiting would only have it started again every 30 s,
+        # writing this to the log each time; stay idle instead until the service is removed
+        while True:
+            time.sleep(86400)
     sys.exit(0)
 
     load_env_file(HERE / ".env")

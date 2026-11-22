@@ -204,7 +204,7 @@ worker too. Nothing changes in R2's CORS policy, and no new setting is needed.
 The web app now prepares every video itself; the worker isn't needed. Do it in this order:
 1. Let the worker finish what it's doing (no project "Transcribing" or "Getting ready"), then stop it for good:
    `worker/install-service.sh remove` on the Mac (or Ctrl-C). `git pull` there is optional: the new `worker.py` only
-   says it's retired and exits.
+   says it's retired and then does nothing.
 2. Run the migration `supabase/migrations/20261126000000_browser_prepare.sql`.
 3. Deploy the web app (Fluid compute on, step 3 above).
 4. Optional: remove `worker/.env` from the Mac, and the Supabase secret key from anywhere it was kept.
