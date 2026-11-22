@@ -47,11 +47,13 @@ begin
         preview_bytes = null;
 end $$;
 
--- The browser uploaded the preview it rendered (the web server checked the file is complete first).
--- The key is fixed here, so nobody can point a preview at another file.
+-- The browser uploaded the preview it rendered. POST /api/jobs/<id>/preview/<lang> calls this once it checked
+-- the file is complete. A person could also call it directly, but only for their own outputs, and the key is
+-- fixed here, so nobody can point a preview at another file.
 create function public.save_preview(p_job uuid, p_lang text, p_bytes bigint) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
+  if p_bytes is null or p_bytes < 1 then raise exception 'the preview is empty'; end if;
   update public.job_outputs
      set preview_key = 'u/' || user_id || '/' || job_id || '/out/' || lang || '/preview.mp4',
          preview_bytes = p_bytes
