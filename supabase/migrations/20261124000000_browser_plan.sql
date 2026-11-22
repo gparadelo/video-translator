@@ -19,9 +19,10 @@
 -- row is at, so a plan or preview made from an older run (a browser tab that was still busy with it while the
 -- language was translated again) can never be saved against the new one, nor overwrite its files.
 --
--- jobs.voices pins the ElevenLabs voice of each language for the whole job ({"de": "<voice id>"}): the worker
--- fills in a language the first time it voices it and never changes it, so a later run (a retry, a new
--- translation) speaks with the same voice even if the person changed their voice in Settings since.
+-- jobs.voices pins the ElevenLabs voice of each language for the whole job ({"de": "<voice id>"}): each time
+-- the worker starts producing the job it fills in every language of the job that isn't pinned yet (with the
+-- voice Settings give it then) and never changes a pin, so a later run (a retry, a new translation) speaks with
+-- the same voice even if the person changed their voice in Settings since.
 
 alter table public.job_outputs drop constraint job_outputs_status_check;
 alter table public.job_outputs add constraint job_outputs_status_check

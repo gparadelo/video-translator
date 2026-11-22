@@ -260,7 +260,8 @@ class Job:
             self.beat.check()
         # Per-job settings for vt.py: this person's languages and voice. Every language gets its voice spelled
         # out, so nothing in a config.toml in the worker's folder (merged under job.toml) can pick another voice.
-        # A language keeps the voice it was first voiced with in this job (jobs.voices), whatever Settings say now.
+        # A language keeps the voice it had when this job was first produced (jobs.voices: every language not
+        # pinned yet is pinned now, before any is voiced), whatever Settings say now.
         langs = self.row.get("languages") or []
         per_lang = self.prof.get("voice_ids") or {}
         voices = {l: per_lang.get(l) or self.prof["voice_id"] for l in langs}

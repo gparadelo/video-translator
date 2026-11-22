@@ -80,8 +80,10 @@ Things to know:
   language reuses the voice audio. The worker stops once a language is voiced: it uploads the recorded voice
   (the plan inputs, below), and the person's browser builds the timing plan and the voice track and makes the
   video.
-- Each language keeps the voice it was first voiced with in that project (`jobs.voices`): changing the voice in
-  Settings applies to new projects, and to languages a project hasn't voiced yet.
+- Each language keeps the voice it had when the worker first started producing it in that project
+  (`jobs.voices`, pinned for all of the project's languages at the start of the run): retries and new
+  translations of it use that voice. Changing the voice in Settings applies to new projects, and to languages
+  added to a project later.
 - If the worker dies mid-job, the job goes back to the queue after two minutes; after three such tries it
   is marked failed.
 - One language failing doesn't stop the others: it is marked failed with the reason, and the job finishes.
