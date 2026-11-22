@@ -6,7 +6,7 @@ import { workerOnline, type Worker } from "@/lib/jobs";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
 
-/** Top bar on every signed-in screen: name, whether the render Mac is on, who you are. */
+/** Top bar on every signed-in screen: name, whether the worker Mac is on, who you are. */
 export function Header() {
   const [supabase] = useState(createClient);
   const [info] = usePoll(async () => {
@@ -24,9 +24,9 @@ export function Header() {
           Video Translator
         </Link>
         {info && (
-          <span className="flex items-center gap-1.5 text-xs text-neutral-500" title="The Mac that renders the videos">
+          <span className="flex items-center gap-1.5 text-xs text-neutral-500" title="The Mac that transcribes, translates and voices the videos">
             <span className={`h-2 w-2 rounded-full ${info.online ? "bg-emerald-500" : "bg-neutral-400"}`} />
-            {info.online ? "Render Mac online" : "Render Mac offline"}
+            {info.online ? "Worker Mac online" : "Worker Mac offline"}
           </span>
         )}
         <form action="/auth/signout" method="post" className="ml-auto flex items-center gap-3 text-xs text-neutral-500">

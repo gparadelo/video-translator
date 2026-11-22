@@ -25,12 +25,17 @@ export type Job = {
 
 export type Output = {
   lang: string;
-  status: "pending" | "running" | "done" | "failed";
+  // ready: the worker made the plan and the voice; the browser renders the video (lib/render).
+  // done: rendered by an older worker (output_key is the full video).
+  status: "pending" | "running" | "ready" | "done" | "failed";
   seconds: number | null;
   flags: string[];
   output_key: string | null;
   output_bytes: number | null;
-  preview_key: string | null;
+  preview_key: string | null; // the 720p preview, made by the browser (or by an older worker)
+  preview_bytes: number | null;
+  plan_key: string | null;
+  voice_key: string | null;
 };
 
 export type Worker = { id: string; last_seen: string };
@@ -51,7 +56,7 @@ export const STATUS: Record<Job["status"], { label: string; tone: "idle" | "busy
   needs_review: { label: "Ready for your review", tone: "action" },
   approved: { label: "Waiting to translate", tone: "idle" },
   producing: { label: "Translating", tone: "busy" },
-  done: { label: "Done", tone: "good" },
+  done: { label: "Ready", tone: "good" },
   failed: { label: "Failed", tone: "bad" },
   canceled: { label: "Canceled", tone: "idle" },
 };
@@ -66,6 +71,7 @@ const STAGES: Record<string, string> = {
   rewrite: "Adjusting the translation to fit",
   tts: "Recording the voice",
   plan: "Fitting the video to the voice",
+  voice: "Mixing the voice",
   render: "Rendering the video",
   preview: "Making the preview",
   upload: "Uploading the result",
@@ -89,11 +95,12 @@ export const megabytes = (bytes: number | null) => (bytes ? `${Math.round(bytes 
 export const splitBeats = (script: string) =>
   script.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
 
-/** Upload the file straight to storage with the signed link from the server. */
+/** Upload a file straight to storage with the signed link from the server. */
 export function uploadVideo(
-  file: File,
+  file: Blob,
   upload: { url: string; headers: Record<string, string> },
   onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -102,6 +109,8 @@ export function uploadVideo(
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`storage answered ${xhr.status}`)));
     xhr.onerror = () => reject(new Error("the connection dropped"));
+    xhr.onabort = () => reject(new DOMException("stopped", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
   });
 }
