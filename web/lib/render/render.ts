@@ -32,10 +32,15 @@ export type Encoder = {
   codec: VideoCodec;
   bitrate: number;
   hardwareAcceleration: "prefer-hardware" | "no-preference";
-  latencyMode: "quality" | "realtime";
   width: number;
   height: number;
 };
+
+/**
+ * Always "quality", for every size and the preview: in "realtime" mode an encoder may drop frames to keep up
+ * (Mediabunny's docs say so), and every frame has to be there for the cuts to stay on their words.
+ */
+const LATENCY_MODE = "quality";
 
 /**
  * The best encoder this browser has for a size: HEVC (smaller files) before H.264 unless `codecs` says
@@ -50,9 +55,9 @@ export async function findEncoder(q: Quality, codecs: VideoCodec[] = ["hevc", "a
         height: q.height,
         quality: new MbQuality({ bitrate }),
         hardwareAcceleration,
-        latencyMode: q.latencyMode,
+        latencyMode: LATENCY_MODE,
       }).catch(() => false);
-      if (ok) return { codec, bitrate, hardwareAcceleration, latencyMode: q.latencyMode, width: q.width, height: q.height };
+      if (ok) return { codec, bitrate, hardwareAcceleration, width: q.width, height: q.height };
     }
   }
   return null;
@@ -169,7 +174,7 @@ export async function renderPlan(job: RenderJob): Promise<{ frames: number; enco
     codec: encoder.codec,
     quality: new MbQuality({ bitrate: encoder.bitrate }),
     hardwareAcceleration: encoder.hardwareAcceleration,
-    latencyMode: encoder.latencyMode,
+    latencyMode: LATENCY_MODE,
     keyFrameInterval: 2,
     onEncodedPacket: () => void encoded++,
   });
@@ -278,40 +283,52 @@ export async function renderPlan(job: RenderJob): Promise<{ frames: number; enco
 }
 
 /**
- * Time a short encode at each size (decoding the start of the source, like the real render) and return the
- * seconds per output frame for each, at full speed: starting the encoder (which can take a moment) is left
- * out. Takes about `seconds` per size.
+ * Time a short encode at each size (decoding and drawing the start of the source, like the real render) and
+ * return the seconds per output frame for each. The clock starts when the first frame comes out of the
+ * encoder, so starting the encoder and filling its look-ahead (quality mode keeps some frames back) are left
+ * out, and stops when the last frame is out (after the flush). Takes about `seconds` per size.
  */
 export async function measureSpeed(source: Source, encoders: Encoder[], seconds = 0.7): Promise<number[]> {
   const sink = new VideoSampleSink(source.track);
   const results: number[] = [];
-  const WARM = 5; // packets before the clock starts
   for (const enc of encoders) {
-    const out: number[] = []; // when each packet came out of the encoder
+    let first = 0; // when the first packet came out
+    let packets = 0;
     const output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new NullTarget() });
     const video = new VideoSampleSource({
       codec: enc.codec,
       quality: new MbQuality({ bitrate: enc.bitrate }),
       hardwareAcceleration: enc.hardwareAcceleration,
-      latencyMode: enc.latencyMode,
-      onEncodedPacket: () => void out.push(performance.now()),
+      latencyMode: LATENCY_MODE,
+      onEncodedPacket: () => {
+        if (!packets++) first = performance.now();
+      },
     });
     output.addVideoTrack(video, { frameRate: 30 });
-    await output.start();
-    const painter = new Painter(enc.width, enc.height);
-    let n = 0;
-    for await (const sample of sink.samples()) {
-      const frame = painter.paint(sample);
-      sample.close();
-      const s = new VideoSample(frame, { timestamp: n / 30, duration: 1 / 30 });
-      await video.add(s);
-      s.close();
-      n++;
-      const warm = out[WARM - 1];
-      if (n >= 120 || (warm && performance.now() - warm > seconds * 1000)) break;
+    try {
+      await output.start();
+      const painter = new Painter(enc.width, enc.height);
+      let n = 0;
+      for await (const sample of sink.samples()) {
+        let s: VideoSample;
+        try {
+          s = new VideoSample(painter.paint(sample), { timestamp: n / 30, duration: 1 / 30 });
+        } finally {
+          sample.close();
+        }
+        try {
+          await video.add(s);
+        } finally {
+          s.close();
+        }
+        n++;
+        if (n >= 150 || (packets > 0 && performance.now() - first > seconds * 1000)) break;
+      }
+      await output.finalize();
+      results.push(packets > 1 ? (performance.now() - first) / 1000 / (packets - 1) : NaN);
+    } finally {
+      if (output.state !== "finalized" && output.state !== "canceled") await output.cancel().catch(() => {});
     }
-    await output.finalize();
-    results.push(out.length > WARM ? (out[out.length - 1] - out[WARM - 1]) / 1000 / (out.length - WARM) : NaN);
   }
   return results;
 }

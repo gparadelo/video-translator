@@ -10,8 +10,6 @@ export type Quality = {
   height: number;
   /** Bits per second for HEVC; H.264 gets AVC_FACTOR times this. */
   bitrate: number;
-  /** Bigger outputs favour quality; 720p favours speed. Not shown to people. */
-  latencyMode: "quality" | "realtime";
 };
 
 /** The bitrate in config.default.toml ([render] video_bitrate): for 4K HEVC, scaled down for smaller sizes. */
@@ -49,11 +47,11 @@ export const qualityLabel = (q: Quality) => `${LABELS[q.id]} (${q.width}×${q.he
 export function qualityOptions(srcW: number, srcH: number): Quality[] {
   const [w, h] = renderSize(srcW, srcH);
   const short = Math.min(w, h);
-  const out: Quality[] = [{ id: "original", width: w, height: h, bitrate: scaledBitrate(BASE_BITRATE, w, h), latencyMode: "quality" }];
+  const out: Quality[] = [{ id: "original", width: w, height: h, bitrate: scaledBitrate(BASE_BITRATE, w, h) }];
   for (const [id, side] of [["1080p", 1080], ["720p", 720]] as const) {
     if (short <= side) continue;
     const [qw, qh] = sizeForShortSide(w, h, side);
-    out.push({ id, width: qw, height: qh, bitrate: scaledBitrate(BASE_BITRATE, qw, qh), latencyMode: id === "720p" ? "realtime" : "quality" });
+    out.push({ id, width: qw, height: qh, bitrate: scaledBitrate(BASE_BITRATE, qw, qh) });
   }
   return out;
 }
@@ -62,7 +60,7 @@ export function qualityOptions(srcW: number, srcH: number): Quality[] {
 export function previewQuality(srcW: number, srcH: number): Quality {
   const [w, h] = renderSize(srcW, srcH);
   const [pw, ph] = Math.min(w, h) > 720 ? sizeForShortSide(w, h, 720) : [w, h];
-  return { id: "720p", width: pw, height: ph, bitrate: Math.round(scaledBitrate(BASE_BITRATE, pw, ph) * PREVIEW_FACTOR), latencyMode: "realtime" };
+  return { id: "720p", width: pw, height: ph, bitrate: Math.round(scaledBitrate(BASE_BITRATE, pw, ph) * PREVIEW_FACTOR) };
 }
 
 /** Estimated render times (seconds) per option -> the one to preselect: the best that takes at most `budget`. */

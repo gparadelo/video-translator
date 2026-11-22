@@ -35,9 +35,6 @@ describe("quality options", () => {
     expect(sizeForShortSide(1440, 1800, 1080)).toEqual([1080, 1350]);
     expect(sizeForShortSide(3840, 1634, 720)).toEqual([1692, 720]);
   });
-  it("ties the encoder's latency mode to the choice", () => {
-    expect(qualityOptions(2160, 3840).map((q) => q.latencyMode)).toEqual(["quality", "quality", "realtime"]);
-  });
   it("makes the preview 720p, or the source size when smaller", () => {
     expect(previewQuality(2160, 3840)).toMatchObject({ width: 720, height: 1280 });
     expect(previewQuality(640, 360)).toMatchObject({ width: 640, height: 360 });

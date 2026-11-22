@@ -19,7 +19,7 @@ export type Progress = { stage: Stage; fraction: number };
 export async function checkBrowser(): Promise<string | null> {
   if (missingApis()) return UNSUPPORTED;
   if (!(await canEncodeVoice())) return UNSUPPORTED;
-  if (!(await findEncoder({ id: "720p", width: 720, height: 1280, bitrate: 2_000_000, latencyMode: "realtime" }, ["avc"])))
+  if (!(await findEncoder({ id: "720p", width: 720, height: 1280, bitrate: 2_000_000 }, ["avc"])))
     return UNSUPPORTED;
   return null;
 }
