@@ -4,7 +4,7 @@
 --   * the workers table goes (its select policy, its grants and its place in the realtime publication with it);
 --   * jobs.worker_id, lease_until, attempts and progress go: nothing sets or reads them any more. The functions that
 --     still cleared them are replaced first, the same without them, and so is the insert policy that checked them;
---   * the service role loses its table grants: only the worker used the secret key. The web app uses the
+--   * the service role loses its table and function grants: only the worker used the secret key. The web app uses the
 --     publishable key and the owner-scoped functions.
 --
 -- Kept for projects made before the browser pipeline, until their files are past R2's 30-day lifecycle:
@@ -146,6 +146,9 @@ alter table public.jobs
 revoke all on public.profiles, public.jobs, public.job_outputs, public.usage_events, public.user_secrets
   from service_role;
 revoke all on all sequences in schema public from service_role;
+-- and its functions: the people's ones (approve_job, start_run, ...) do nothing without a signed-in person, but
+-- settle_job, request_languages and missing_setup take any job or person, and the secret key shouldn't reach them
+revoke execute on all functions in schema public from service_role;
 
 -- ------------------------------------------------------------------ kept for older projects
 

@@ -23,7 +23,7 @@
 
 -- ------------------------------------------------------------------ jobs that were waiting for the worker
 
--- (the worker is stopped before this runs: see "Upgrading to preparing videos in the browser" in docs/web-setup.md)
+-- (the worker is stopped before this runs: see "Upgrading from the worker setup" in docs/web-setup.md)
 update public.jobs set status = 'preparing', worker_id = null, lease_until = null, progress = null, attempts = 0
  where status in ('queued', 'preparing');
 update public.jobs set status = 'aligning', worker_id = null, lease_until = null, progress = null, attempts = 0
