@@ -63,10 +63,27 @@ Chrome and Edge work best; other browsers are told so. Files and formats: "Files
 ## Tests
 
 ```bash
-pnpm test   # unit tests + checks against ffmpeg and vt.py, with fake Claude/ElevenLabs (needs ffmpeg and uv)
+pnpm test   # unit tests + checks against ffmpeg, with fake Claude/ElevenLabs
 pnpm e2e    # in headless Chrome: checks, measures and prepares test videos, produces, builds and renders them,
-            # and compares everything with vt.py and the CLI
+            # and compares everything with ffmpeg and the frozen references
 ```
+
+Both need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg`); `pnpm e2e` also needs Google Chrome
+(`CHROME_PATH` or `--chrome`). No Python. The tests that need ffmpeg are skipped without it.
+
+What the tests compare against:
+
+- **ffmpeg itself**, run from the tests (`test/reference.mjs`, `test/videos.mjs`): frame selection against
+  ffmpeg's clip retiming command, scene scores and cuts against `scale=270:-2,select,metadata=print`, loudness
+  against `ebur128`, length, frame rate and size against `ffprobe -show_streams`, the voice track against the one
+  ffmpeg makes from the same plan (`atrim`, `atempo`, `volume`, `alimiter`), and renders against ffmpeg's render
+  of the same plan.
+- **Frozen references** in `test/fixtures/` for what only the old Python pipeline (`scripts/vt.py`, removed)
+  computed: the timing plans and reports (`pipeline-cases.json`), the analyses, transcripts and requests of the
+  prepare half (`prepare-parity.json`), the translations, voice requests and plan inputs of the produce half
+  (`produce-parity.json`), and the jobs of `pnpm e2e` (`e2e.json`). They were made once by running the Python
+  pipeline against the fakes in `test/mocks.mjs`, and can't be made again. If a deliberate change makes the web
+  app differ from them, update the fixture by hand in the same commit and say why.
 
 ## Learn More
 

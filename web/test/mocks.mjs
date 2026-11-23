@@ -326,6 +326,11 @@ export async function startMocks() {
     fail(service, ...answers) {
       failures[service].push(...answers);
     },
+    /** The MP3 the fake ElevenLabs answered for this text and speed (null if it wasn't asked for it). */
+    voiceAudio(text, speed) {
+      const v = voices.get(`${text}|${speed}`);
+      return v ? Buffer.from(JSON.parse(v).audio_base64, "base64") : null;
+    },
     /** What the fake speech-to-text and forced alignment "hear": {language_code, words: [{text, start, end}]}. */
     setSpeech(s) {
       speech = s ?? DEFAULT_SPEECH;

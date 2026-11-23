@@ -1,34 +1,31 @@
-// What the browser reads from a video's index (lib/prepare/probe.ts, timing.ts) against ffprobe and vt.py, on the
-// test videos (test/videos.mjs): the length and frame rate vt.cmd_analyze takes from ffprobe, the shown size
-// (vt.video_size: rotation applied), HDR and variable frame rates; the loudness meter (LoudnessMeter, any number of
-// channels) against vt.lufs (ffmpeg's ebur128) on the decoded sound; and the file checks' decisions (judge). The
-// browser's own decoding is checked by test/e2e.
+// What the browser reads from a video's index (lib/prepare/probe.ts, timing.ts) against ffprobe, on the test videos
+// (test/videos.mjs): the length and frame rate as ffprobe reports them, the shown size (rotation applied, as ffmpeg
+// decodes it), HDR and variable frame rates; the loudness meter (LoudnessMeter, any number of channels) against
+// ffmpeg's ebur128 on the decoded sound; and the file checks' decisions (judge). The browser's own decoding is
+// checked by test/e2e.
 //
-// Needs ffmpeg and uv; skipped otherwise.
+// Needs ffmpeg; skipped otherwise.
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { integratedLoudness, LoudnessMeter } from "../lib/pipeline/loudness";
 import { judge } from "../lib/prepare/checks";
 import { rFrameRate } from "../lib/prepare/timing";
 import { factsOf } from "./media-node";
+import { media } from "./reference.mjs";
 import { makeVideo, probe, VIDEOS } from "./videos.mjs";
 
-const FIXTURE = resolve(__dirname, "prepare_fixture.py");
-const has = (cmd: string, arg = "-version") => {
+const ready = (() => {
   try {
-    execFileSync(cmd, [arg], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-};
-const ready = has("ffmpeg") && has("uv", "--version");
-const py = (...args: string[]) =>
-  execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", FIXTURE, ...args], { encoding: "utf8", maxBuffer: 1 << 28 });
+})();
 
 /** The sound as ffmpeg decodes it: one Float32Array per channel. */
 function decodedSound(path: string, channels: number): Float32Array[] {
@@ -41,7 +38,7 @@ function decodedSound(path: string, channels: number): Float32Array[] {
 /** Roughly what desktop Chrome decodes. */
 const CHROME = { video: ["avc", "hevc", "vp8", "vp9", "av1"], audio: ["aac", "opus", "mp3", "flac", "vorbis"] };
 
-describe.skipIf(!ready)("the video's facts as ffprobe and vt.py have them", () => {
+describe.skipIf(!ready)("the video's facts as ffprobe and ffmpeg have them", () => {
   let dir: string;
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "vt-probe-"));
@@ -75,17 +72,17 @@ describe.skipIf(!ready)("the video's facts as ffprobe and vt.py have them", () =
       }
       if (refused.includes(name)) return;
 
-      const vt = JSON.parse(py("media", path));
-      expect(f.duration).toBe(vt.dur);
-      expect(f.video!.fps).toBe(vt.fps);
-      expect([f.video!.width, f.video!.height]).toEqual([vt.width, vt.height]);
+      const ff = media(path);
+      expect(f.duration).toBe(ff.dur);
+      expect(f.video!.fps).toBe(ff.fps);
+      expect([f.video!.width, f.video!.height]).toEqual([ff.width, ff.height]);
       const sound = decodedSound(path, f.audio!.channels);
       const meter = new LoudnessMeter(f.audio!.sampleRate, sound.length);
       for (let at = 0; at < sound[0].length; at += 4096) { // fed in pieces, as the browser decodes it
         const n = Math.min(4096, sound[0].length - at);
         meter.push(sound.map((c) => c.subarray(at, at + n)), n);
       }
-      expect(meter.lufs()).toBe(vt.base_lufs);
+      expect(meter.lufs()).toBe(ff.base_lufs);
       if (sound.length === 1) expect(meter.integrated()).toBe(integratedLoudness(sound[0], f.audio!.sampleRate));
     });
   }

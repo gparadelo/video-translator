@@ -1,31 +1,28 @@
-// The browser's frame selection (lib/render/frames.ts) against ffmpeg itself: synthetic videos with the
-// frame number drawn into every frame are rendered clip by clip with scripts/vt.py's own ffmpeg command
-// (vt.segment_cmd), and the frame numbers that come out must be the ones selectFrames picks. Source
-// timestamps are read with Mediabunny, exactly as the browser reads them.
+// The browser's frame selection (lib/render/frames.ts) against ffmpeg itself: synthetic videos with the frame
+// number drawn into every frame are rendered clip by clip with ffmpeg's retiming command (test/reference.mjs
+// segmentCmd: setpts, fps, scale, tpad, the command the old CLI renders used), and the frame numbers that come out
+// must be the ones selectFrames picks. Source timestamps are read with Mediabunny, exactly as the browser reads them.
 //
-// Needs ffmpeg and uv (to run vt.py); skipped otherwise. Takes about half a minute.
+// Needs ffmpeg; skipped otherwise. Takes about half a minute.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { ALL_FORMATS, EncodedPacketSink, FilePathSource, Input } from "mediabunny";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { segmentTiming, selectFrames, type Segment } from "../lib/render/frames";
 import { fileStart as startOf } from "../lib/render/render";
+import { frameVideo, segmentCodes } from "./reference.mjs";
 
-const FIXTURE = resolve(__dirname, "vt_fixture.py");
-const has = (cmd: string, arg = "-version") => {
+const ready = (() => {
   try {
-    execFileSync(cmd, [arg], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-};
-const ready = has("ffmpeg") && has("uv", "--version");
-const py = (...args: string[]) =>
-  execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", FIXTURE, ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
+})();
 
 // (name, frame rate, mp4 time scale): ffmpeg's default for 30 fps, a phone-like 29.97 fps at 1/600
 // (uneven ticks per frame), 24 fps at 1/90000 and 25 fps.
@@ -60,7 +57,7 @@ async function sourceTicks(path: string) {
   return { ticks: ticks.sort((a, b) => a - b), timescale, fileStart };
 }
 
-describe.skipIf(!ready)("frame selection matches ffmpeg (vt.segment_cmd)", () => {
+describe.skipIf(!ready)("frame selection matches ffmpeg's retiming", () => {
   let dir = "";
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "vt-frames-"));
@@ -68,14 +65,11 @@ describe.skipIf(!ready)("frame selection matches ffmpeg (vt.segment_cmd)", () =>
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it.each(SOURCES)("%s fps", async (name, rate, timescale) => {
-    const src = join(dir, `src${name}.mp4`);
-    py("video", src, "--rate", rate, ...(timescale ? ["--timescale", String(timescale)] : []));
+    const src = frameVideo(join(dir, `src${name}.mp4`), { rate, timescale });
     const [n, d] = rate.split("/").map(Number);
     const fps = n / (d || 1);
     const list = cases(fps);
-    const file = join(dir, `cases${name}.json`);
-    writeFileSync(file, JSON.stringify(list));
-    const ffmpeg: number[][] = JSON.parse(py("segments", src, file));
+    const ffmpeg: number[][] = segmentCodes(src, list);
     const source = await sourceTicks(src);
     if (timescale) expect(source.timescale).toBe(timescale);
 

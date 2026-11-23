@@ -1,45 +1,46 @@
-// End-to-end check in a real browser (Google Chrome, headless), no network and no paid APIs:
-//   1. makes fake jobs with scripts/vt.py (test/pipeline_fixture.py e2e: a synthetic video with frame numbers
-//      drawn in, a synthetic analysis, fake TTS clips) up to the plan inputs the worker uploads, and renders
-//      them with the CLI (vt.cmd_render) as the reference,
+// End-to-end check in a real browser (Google Chrome, headless), no network and no paid APIs. What the old Python
+// pipeline made for the same jobs is frozen in test/fixtures/e2e.json (see "Tests" in web/README.md); the reference
+// renders are made here with ffmpeg alone from the frozen plans (test/reference.mjs: the same clip-by-clip ffmpeg
+// commands the old CLI render used).
+//   1. makes two fake jobs from the frozen fixtures: a synthetic 12 s 1080x1920 30 fps video with frame numbers
+//      drawn in, each job's plan inputs and fake TTS clips (made with ffmpeg), and the reference render of the
+//      "flat" one (ffmpeg, from its frozen plan.json),
 //   2. in Chrome, builds each job's plan.json and voice.wav from its plan inputs with lib/pipeline (the clips
-//      decoded by the browser) and checks them against vt.py's,
+//      decoded by the browser) and checks them against the frozen plan and ffmpeg's voice track of it,
 //   3. renders the "flat" job (every tempo 1) from what the browser built with lib/render, the source read with
-//      range requests, and checks every output frame shows the same source frame as the CLI render, and that
-//      the voice lines up. The "stretched" job (a beat's tempo isn't 1: WSOLA here, atempo in vt.py) is checked
+//      range requests, and checks every output frame shows the same source frame as the reference render, and that
+//      the voice lines up. The "stretched" job (a beat's tempo isn't 1: WSOLA here, atempo in ffmpeg) is checked
 //      beat by beat in step 2.
 //   4. an approved job, all the way: in Chrome, the job page's produce code (lib/produce/run.ts) translates,
 //      voices and fits its language through the produce routes (served here by lib/produce/steps.ts, with the
-//      fake Claude and ElevenLabs of test/mocks.mjs) until it is voiced; its plan inputs must be vt.py's (vt.produce
-//      against the same fakes), then the browser builds its plan and voice and renders it, checked against the
-//      CLI render of vt.py's.
-//   5. a new video, all the way, with no worker: the file checks on test videos (test/videos.mjs: HDR, variable
-//      frame rate, rotated, no sound, codecs Chrome can't decode, too short), what the browser measures of them
-//      (length, frame rate, size, cuts and loudness against vt.py's ffprobe/ffmpeg, the voiceover's sound against
-//      ffmpeg's), then one is uploaded and prepared through the prepare routes (lib/prepare/run.ts against
-//      lib/prepare/steps.ts and the fakes) to its analysis.json, which must be vt.prepare's; its transcript is
-//      edited and timed again (read back from storage this time), as the worker's align; then it is produced
-//      ("de"), built and rendered as in step 4, and checked against vt.py's CLI render of the same.
+//      fake Claude and ElevenLabs of test/mocks.mjs) until it is voiced; its requests and plan inputs must be the
+//      frozen ones, then the browser builds its plan and voice and renders it, checked against ffmpeg's render of
+//      the frozen plan.
+//   5. a new video, all the way: the file checks on test videos (test/videos.mjs: HDR, variable frame rate,
+//      rotated, no sound, codecs Chrome can't decode, too short), what the browser measures of them (length,
+//      frame rate, size, cuts and loudness against ffprobe/ffmpeg, the voiceover's sound against ffmpeg's), then
+//      one is uploaded and prepared through the prepare routes (lib/prepare/run.ts against lib/prepare/steps.ts and
+//      the fakes) to its analysis.json, which must be the frozen one; its transcript is edited and timed again (read
+//      back from storage this time); then it is produced ("de"), built and rendered as in step 4.
 //
-//   pnpm e2e [--size 1080x1920] [--rate 30] [--modes preview,original,720p] [--chrome /path/to/chrome] [--headed] [--bench]
+//   pnpm e2e [--modes preview,original,720p] [--chrome /path/to/chrome] [--headed] [--keep] [--bench]
 //
-// Needs ffmpeg, uv and Chrome (CHROME_PATH or --chrome; defaults to the usual macOS location).
+// Needs ffmpeg and Chrome (CHROME_PATH or --chrome; defaults to the usual macOS location).
 
-import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { chromium } from "playwright-core";
 import { createServer } from "vite";
 import { startMocks } from "../mocks.mjs";
+import { compareRender, frameVideo, media, renderReference, toneClip, voiceover, voiceTrack } from "../reference.mjs";
 import { makeVideo, VIDEOS } from "../videos.mjs";
 
 const here = resolve(import.meta.dirname);
 const { values: opt } = parseArgs({
   options: {
-    size: { type: "string", default: "1080x1920" },
-    rate: { type: "string", default: "30" },
     modes: { type: "string", default: "preview,original,720p" },
     chrome: { type: "string", default: process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
     headed: { type: "boolean", default: false },
@@ -49,28 +50,43 @@ const { values: opt } = parseArgs({
   },
 });
 
-const py = (script, ...args) =>
-  execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", join(here, "..", script), ...args], {
-    encoding: "utf8",
-    maxBuffer: 1 << 26,
-  });
-
+const FROZEN = JSON.parse(readFileSync(join(here, "..", "fixtures", "e2e.json"), "utf8"));
 const dir = mkdtempSync(join(tmpdir(), "vt-e2e-"));
-console.log(`fixture jobs in ${dir} (${opt.size}, ${opt.rate} fps)`);
-const jobs = JSON.parse(py("pipeline_fixture.py", "e2e", dir, "--size", opt.size, "--rate", opt.rate).trim());
-const reference = jobs.flat.reference;
-const files = { "source.mp4": jobs.flat.source };
-for (const [name, j] of Object.entries(jobs)) {
-  files[`${name}/inputs.json`] = j.inputs;
-  const inputs = JSON.parse(readFileSync(j.inputs, "utf8"));
-  for (const c of inputs.clips) {
-    files[`${name}/tts/${c.file}`] = join(j.tts, c.file);
-    files[`${name}/tts/${c.file.replace(/\.mp3$/, ".json")}`] = join(j.tts, c.file.replace(/\.mp3$/, ".json"));
-  }
+console.log(`fixture jobs in ${dir}`);
+
+/** A frozen plan's reference: its voice track (ffmpeg, from the clips in `clipDir`) and plan in `folder`, as files. */
+function referenceOf(folder, plan, clipDir, baseLufs) {
+  const missing = plan.beats.map((b) => b.audio).filter((f) => !existsSync(join(clipDir, f)));
+  if (missing.length) throw new Error(`FAIL: the clips the frozen plan uses weren't made (${missing.join(", ")}): the voice requests differ`);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "plan_web.json"), JSON.stringify(plan));
+  voiceTrack(plan, clipDir, baseLufs, join(folder, "voice.wav"));
+  return { plan: join(folder, "plan_web.json"), voice: join(folder, "voice.wav") };
 }
+
+// 1: the source video, the two jobs' plan inputs and clips, and the reference render of the "flat" one
+const sourcePath = frameVideo(join(dir, "source.mp4"), { rate: "30", seconds: 12, size: [1080, 1920] });
+const files = { "source.mp4": sourcePath };
+const jobs = {};
+for (const name of ["flat", "stretched"]) {
+  const f = FROZEN[name];
+  const tts = join(dir, name, "tts");
+  mkdirSync(tts, { recursive: true });
+  writeFileSync(join(dir, name, "inputs.json"), JSON.stringify(f.inputs));
+  files[`${name}/inputs.json`] = join(dir, name, "inputs.json");
+  for (const [file, k] of Object.entries(f.clips)) {
+    const meta = file.replace(/\.mp3$/, ".json");
+    toneClip(join(tts, file), k.tone.spans, k.tone.dur, k.tone.freq, k.tone.level_db);
+    writeFileSync(join(tts, meta), JSON.stringify(k.meta));
+    files[`${name}/tts/${file}`] = join(tts, file);
+    files[`${name}/tts/${meta}`] = join(tts, meta);
+  }
+  jobs[name] = referenceOf(join(dir, name, "reference"), f.plan, tts, f.inputs.analysis.base_lufs);
+}
+const reference = renderReference(FROZEN.flat.plan, sourcePath, jobs.flat.voice, join(dir, "flat-reference.mp4"));
 const ranges = [];
 
-// 5: test videos, the new-upload job and vt.py's own preparation of the same video
+// 5: test videos and the new-upload job
 const videoDir = join(dir, "videos");
 mkdirSync(videoDir, { recursive: true });
 const MEASURED = ["cuts", "steps", "ntsc", "film", "sixty", "rotated", "rotated180"];
@@ -84,42 +100,18 @@ for (const [n, size] of Object.entries(BENCH)) {
 }
 const UPLOAD = { userId: "user-up", jobId: "job-upload", voice: "voice123456789", video: "cuts", reference: "Nanoleaf lights" };
 
-// 4: the approved job, prepared on the same video as the others; vt.py produces it against the fakes (they answer
-// from this process, so vt.py runs without blocking it) and renders it with the CLI as the reference
+// 4: the approved job, on the same video as the others: a job where Claude rewrote beats and every beat ends at
+// tempo 1 (so the render's voice can be compared sample for sample with the reference's), with the analysis, the
+// requests, the plan inputs and the plan the Python pipeline had for it (frozen)
 const mocks = await startMocks();
-const pyAsync = (script, ...args) => new Promise((res, rej) =>
-  execFile("uv", ["run", "-q", "--no-project", "--with", "requests", "--with", "anthropic", "python", join(here, "..", script), ...args],
-           { encoding: "utf8", maxBuffer: 1 << 26 }, (e, out, err) => (e ? rej(new Error(`${e.message}\n${err}`)) : res(out))));
-const fps = JSON.parse(readFileSync(jobs.flat.inputs, "utf8")).analysis.video.fps;
-// a job where Claude rewrote beats, and, if one of the first few seeds gives it, every beat ends at tempo 1 (so
-// the render's voice can be compared sample for sample with the CLI's; a stretched beat is compared by level)
-let producedCase, vtProduced, vtRequests;
-for (let seed = 1; ; seed++) {
-  let c;
-  try {
-    c = JSON.parse(await pyAsync("produce_fixture.py", "case", join(dir, `produced${seed}`), "--seed", String(seed),
-                                 "--video", jobs.flat.source, "--size", opt.size, "--dur", "12", "--fps", String(fps)));
-  } catch (e) {
-    if (seed > 30 || !/doesn't fit/.test(e.message)) throw e;
-    continue;
-  }
-  mocks.clear();
-  const r = JSON.parse(await pyAsync("produce_fixture.py", "produce", c.job, "de", "--claude", mocks.claudeUrl,
-                                     "--eleven", mocks.elevenUrl, "--render"));
-  const reqs = mocks.requests.splice(0);
-  const rewrote = reqs.some((q) => q.service === "claude" && q.body.messages[0].content.startsWith("Here is the original"));
-  const flat = r.plan && JSON.parse(readFileSync(r.plan, "utf8")).beats.every((b) => b.tempo === 1);
-  if (r.plan && rewrote && (flat || !producedCase)) [producedCase, vtProduced, vtRequests] = [c, r, reqs];
-  if ((r.plan && rewrote && flat) || (producedCase && seed >= 12) || seed > 30) break;
-}
-if (!producedCase) throw new Error("no seed made a job where Claude rewrote beats");
+const vtProduced = FROZEN.produced;
+const vtRequests = vtProduced.requests;
 const store = join(dir, "store");
 const PRODUCED = { userId: "user-e2e", jobId: "job-e2e", voice: "voice123456789" };
 const runFolder = join(store, "u", PRODUCED.userId, PRODUCED.jobId, "out", "de", "g1");
 const uploadRunFolder = join(store, "u", UPLOAD.userId, UPLOAD.jobId, "out", "de", "g1");
 mkdirSync(join(store, "u", PRODUCED.userId, PRODUCED.jobId), { recursive: true });
-copyFileSync(producedCase.analysis, join(store, "u", PRODUCED.userId, PRODUCED.jobId, "analysis.json")); // the worker's upload
-mocks.clear();
+writeFileSync(join(store, "u", PRODUCED.userId, PRODUCED.jobId, "analysis.json"), JSON.stringify(vtProduced.analysis));
 
 // Serves the fixture files with HTTP range support (like R2) and takes the browser's files back.
 const fixtureFiles = {
@@ -233,15 +225,15 @@ function jsonDiffs(a, b, path = "", out = []) {
   return out;
 }
 
-/** The browser's voice.wav against vt.py's: outside stretched beats sample by sample, stretched beats by level. */
+/** The browser's voice.wav against ffmpeg's: outside stretched beats sample by sample, stretched beats by level. */
 function voiceParity(name, j) {
-  const got = wavSamples(join(dir, `${name}-voice.wav`)), want = wavSamples(join(dirname(j.inputs), "voice.wav"));
+  const got = wavSamples(join(dir, `${name}-voice.wav`)), want = wavSamples(j.voice);
   const plan = JSON.parse(readFileSync(join(dir, `${name}-plan.json`), "utf8"));
   const spans = plan.beats.filter((b) => b.tempo !== 1).map((b) => {
     const at = Math.round(b.offset * 44100) + 219;
     return [at - 2048, at + Math.round(b.dur * 44100) + 2048];
   });
-  // a stretched beat changes the measured loudness a little; when it rounds (to 0.1 LU, like vt.lufs) the other
+  // a stretched beat changes the measured loudness a little; when it rounds (to 0.1 LU, as ebur128 prints it) the other
   // way, the whole track is 0.1 dB louder or quieter (see test/pipeline-parity.test.ts)
   let xy = 0, yy = 0;
   for (let k = 0; k < want.length / 2; k++) {
@@ -281,7 +273,7 @@ function monoSamples(path) {
   return new Float32Array(raw.buffer, raw.byteOffset, raw.length / 4);
 }
 
-/** The browser's voiceover against ffmpeg's (vt.py's base_vo.m4a): length, level, and how alike (best lag). */
+/** The browser's voiceover against ffmpeg's: length, level, and how alike (best lag). */
 function audioParity(ours, theirs) {
   const a = monoSamples(ours), b = monoSamples(theirs);
   const rms = (x) => Math.sqrt(x.reduce((s, v) => s + v * v, 0) / x.length);
@@ -328,10 +320,10 @@ try {
       `voice max diff ${v.maxDiff} outside stretched beats${v.gainStep ? " (after a 0.1 dB gain step: the loudness rounded the other way)" : ""}` + (v.levels.length ? `, stretched beats ${v.levels.map((l) => l.toFixed(2)).join(", ")} dB` : ""));
     if (diffs.length) console.log(`  first differences: ${diffs.slice(0, 5).join("; ")}`);
     report({
-      [`${name}: plan.json as vt.py's`]: diffs.length === 0,
-      [`${name}: voice.wav as long as vt.py's`]: v.sameLength,
-      [`${name}: voice samples as vt.py's (within 2)`]: v.maxDiff <= 2,
-      [`${name}: stretched beats at vt.py's level (0.5 dB)`]: v.levels.every((l) => Math.abs(l) < 0.5) && (name !== "stretched" || v.levels.length > 0),
+      [`${name}: plan.json as the frozen one`]: diffs.length === 0,
+      [`${name}: voice.wav as long as ffmpeg's`]: v.sameLength,
+      [`${name}: voice samples as ffmpeg's (within 2)`]: v.maxDiff <= 2,
+      [`${name}: stretched beats at ffmpeg's level (0.5 dB)`]: v.levels.every((l) => Math.abs(l) < 0.5) && (name !== "stretched" || v.levels.length > 0),
     });
   }
 
@@ -339,7 +331,7 @@ try {
   for (const mode of opt.modes.split(",")) {
     ranges.length = 0;
     const r = await page.evaluate((m) => window.runE2E(m), mode);
-    const c = JSON.parse(py("vt_fixture.py", "compare", join(dir, `${mode}.mp4`), reference));
+    const c = compareRender(join(dir, `${mode}.mp4`), reference);
     const sourceRanges = ranges.filter(([p]) => p === "/files/source.mp4");
     console.log(`\n${mode}: ${c.width}x${c.height} ${c.codec} (${r.encoder.hardwareAcceleration}), ${c.frames} frames, ` +
       `${(r.bytes / 1e6).toFixed(1)} MB, ${(r.ms / 1000).toFixed(1)} s (estimated ${(r.estimatedMs / 1000).toFixed(1)} s), ` +
@@ -349,7 +341,7 @@ try {
     report({
       "exact frame count": c.frames === plan.total_frames && r.frames === plan.total_frames && c.ref_frames === plan.total_frames,
       "every frame encoded": r.encoded === plan.total_frames,
-      "same frames as vt.py, the held last frame too": c.same,
+      "same frames as the reference render, the held last frame too": c.same,
       "voice lined up (within 1 sample)": Math.abs(c.audio_offset) <= 1,
       "voice matches (AAC noise only)": c.audio_rel_error < 0.01,
       "source read in ranges": sourceRanges.length > 0,
@@ -360,11 +352,11 @@ try {
   // the download path: private storage, then a normal download; and a stopped render leaves nothing behind
   const [download] = await Promise.all([page.waitForEvent("download"), page.evaluate(() => window.runSave())]);
   await download.saveAs(join(dir, "saved.mp4"));
-  const saved = JSON.parse(py("vt_fixture.py", "compare", join(dir, "saved.mp4"), reference));
+  const saved = compareRender(join(dir, "saved.mp4"), reference);
   const stop = await page.evaluate(() => window.runSave(400));
   console.log(`\nsaving (private storage + download): ${saved.width}x${saved.height}, ${saved.frames} frames`);
   report({
-    "download: same frames as vt.py": saved.same && saved.frames === plan.total_frames,
+    "download: same frames as the reference render": saved.same && saved.frames === plan.total_frames,
     "stopped render: nothing left behind": stop.stopped && stop.leftovers.length === 0,
   });
 
@@ -377,13 +369,14 @@ try {
   console.log(`\nproduced "de" in the browser in ${(p.ms / 1000).toFixed(1)} s: ${p.stages.join(" -> ")}; ` +
     `${claudeCalls} Claude calls, ${ours.length - claudeCalls} ElevenLabs calls; ${vtProduced.flags.length} flags left`);
   if (inputsDiffs.length) console.log(`  first differences: ${inputsDiffs.slice(0, 5).join("; ")}`);
-  const pj = { inputs: vtProduced.inputs_path, plan: vtProduced.plan };
+  // the reference: ffmpeg's voice track and render of the frozen plan, from the clips the produce routes stored
+  const pj = referenceOf(join(dir, "produced-reference"), vtProduced.plan, join(runFolder, "tts"), vtProduced.analysis.base_lufs);
   const pb = await page.evaluate(() => window.runBuild("produced"));
-  const planDiffs = jsonDiffs(JSON.parse(readFileSync(join(dir, "produced-plan.json"), "utf8")), JSON.parse(readFileSync(pj.plan, "utf8")));
+  const planDiffs = jsonDiffs(JSON.parse(readFileSync(join(dir, "produced-plan.json"), "utf8")), vtProduced.plan);
   const pv = voiceParity("produced", pj);
   const pplan = JSON.parse(readFileSync(join(dir, "produced-plan.json"), "utf8"));
   const pr = await page.evaluate(() => window.runE2E("preview", "produced"));
-  const pc = JSON.parse(py("vt_fixture.py", "compare", join(dir, "produced-preview.mp4"), vtProduced.reference));
+  const pc = compareRender(join(dir, "produced-preview.mp4"), renderReference(vtProduced.plan, sourcePath, pj.voice, join(dir, "produced-reference.mp4")));
   const stretched = pplan.beats.some((b) => b.tempo !== 1);
   console.log(`  built: ${pb.seconds.toFixed(2)} s; voice max diff ${pv.maxDiff} outside stretched beats` +
     (pv.levels.length ? `, stretched beats ${pv.levels.map((l) => l.toFixed(2)).join(", ")} dB` : "") +
@@ -391,18 +384,18 @@ try {
   const claudeDiffs = jsonDiffs(ours.filter((r) => r.service === "claude").map((r) => r.body),
                                 vtRequests.filter((r) => r.service === "claude").map((r) => r.body));
   if (claudeDiffs.length) console.log(`  Claude requests differ: ${claudeDiffs.slice(0, 3).join("; ")}`);
-  // with a stretched beat (WSOLA here, atempo in vt.py) the voice was compared beat by beat when it was built
-  if (stretched) console.log("  (a beat is stretched: the render's voice isn't compared sample for sample with the CLI's)");
+  // with a stretched beat (WSOLA here, atempo in ffmpeg) the voice was compared beat by beat when it was built
+  if (stretched) console.log("  (a beat is stretched: the render's voice isn't compared sample for sample with the reference's)");
   report({
-    "produced: the same Claude requests as vt.py, in order": claudeDiffs.length === 0 && claudeCalls > 0,
-    "produced: the same ElevenLabs requests as vt.py": JSON.stringify(bodies(ours, "eleven")) === JSON.stringify(bodies(vtRequests, "eleven")),
+    "produced: the same Claude requests as the frozen ones, in order": claudeDiffs.length === 0 && claudeCalls > 0,
+    "produced: the same ElevenLabs requests as the frozen ones": JSON.stringify(bodies(ours, "eleven")) === JSON.stringify(bodies(vtRequests, "eleven")),
     "produced: Claude rewrote beats": ours.some((r) => r.service === "claude" && r.body.messages[0].content.startsWith("Here is the original")),
-    "produced: inputs.json as vt.plan_inputs": inputsDiffs.length === 0,
-    "produced: plan.json as vt.py's": planDiffs.length === 0,
-    "produced: voice.wav as long as vt.py's": pv.sameLength,
-    "produced: voice samples as vt.py's (within 2)": pv.maxDiff <= 2,
-    "produced: stretched beats at vt.py's level (0.5 dB)": pv.levels.every((l) => Math.abs(l) < 0.5),
-    "produced: preview has every frame, the same as vt.py's": pc.same && pc.frames === pplan.total_frames && pr.encoded === pplan.total_frames,
+    "produced: inputs.json as the frozen one": inputsDiffs.length === 0,
+    "produced: plan.json as the frozen one": planDiffs.length === 0,
+    "produced: voice.wav as long as ffmpeg's": pv.sameLength,
+    "produced: voice samples as ffmpeg's (within 2)": pv.maxDiff <= 2,
+    "produced: stretched beats at ffmpeg's level (0.5 dB)": pv.levels.every((l) => Math.abs(l) < 0.5),
+    "produced: preview has every frame, the same as the reference render": pc.same && pc.frames === pplan.total_frames && pr.encoded === pplan.total_frames,
     "produced: voice lined up (within 1 sample)": stretched || Math.abs(pc.audio_offset) <= 1,
     "produced: voice matches (AAC noise only)": stretched || pc.audio_rel_error < 0.01,
   });
@@ -421,17 +414,16 @@ try {
   for (const n of MEASURED) {
     const r = await page.evaluate((x) => window.runMeasure(x), n);
     const ours = JSON.parse(readFileSync(join(dir, `measure-${n}.json`), "utf8"));
-    const vt = JSON.parse(execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", join(here, "..", "prepare_fixture.py"), "media", files[`videos/${n}.mp4`]], { encoding: "utf8" }));
-    const ffAudio = join(dir, `ffmpeg-${n}.m4a`);
-    execFileSync("ffmpeg", ["-v", "error", "-y", "-i", files[`videos/${n}.mp4`], "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "128k", ffAudio]);
+    const ff = media(files[`videos/${n}.mp4`]);
+    const ffAudio = voiceover(files[`videos/${n}.mp4`], join(dir, `ffmpeg-${n}.m4a`));
     const a = audioParity(join(dir, `measure-${n}-${r.audio}`), ffAudio);
     console.log(`  measured ${n} in ${(r.ms / 1000).toFixed(2)} s (sound ${(r.phases.sound / 1000).toFixed(2)} s, cuts ${(r.phases.cuts / 1000).toFixed(2)} s, ${ours.frames} frames): ` +
-      `cuts ${JSON.stringify(ours.cuts)}${JSON.stringify(ours.cuts) === JSON.stringify(vt.cuts) ? "" : ` vs vt.py ${JSON.stringify(vt.cuts)}`}, ` +
+      `cuts ${JSON.stringify(ours.cuts)}${JSON.stringify(ours.cuts) === JSON.stringify(ff.cuts) ? "" : ` vs ffmpeg ${JSON.stringify(ff.cuts)}`}, ` +
       `${ours.base_lufs} LUFS; voiceover ${r.audio}: ${a.lengthDiff} samples longer, ${a.levelDb.toFixed(2)} dB, correlation ${a.corr.toFixed(3)} at lag ${a.lag}`);
     report({
-      [`measured ${n}: length, frame rate and size as ffprobe's`]: ours.dur === vt.dur && ours.fps === vt.fps && ours.width === vt.width && ours.height === vt.height,
-      [`measured ${n}: the cuts vt.detect_cuts finds`]: JSON.stringify(ours.cuts) === JSON.stringify(vt.cuts),
-      [`measured ${n}: the loudness vt.lufs measures`]: ours.base_lufs === vt.base_lufs,
+      [`measured ${n}: length, frame rate and size as ffprobe's`]: ours.dur === ff.dur && ours.fps === ff.fps && ours.width === ff.width && ours.height === ff.height,
+      [`measured ${n}: the cuts ffmpeg's scene filter finds`]: JSON.stringify(ours.cuts) === JSON.stringify(ff.cuts),
+      [`measured ${n}: the loudness ffmpeg's ebur128 measures`]: ours.base_lufs === ff.base_lufs,
       // Chrome's AAC encoder leaves its padding at the end (up to two AAC frames longer); STT and alignment don't mind
       [`measured ${n}: the voiceover as ffmpeg's (mono AAC, lined up, as long within two AAC frames, level within 0.5 dB)`]:
         a.lengthDiff >= 0 && a.lengthDiff <= 2048 && a.lag === 0 && Math.abs(a.levelDb) < 0.5 && a.corr > 0.95,
@@ -443,12 +435,11 @@ try {
     console.log(`  bench: measured ${n} (2 minutes, ${BENCH[n]}) in ${(r.ms / 1000).toFixed(1)} s: sound ${(r.phases.sound / 1000).toFixed(1)} s, cuts ${(r.phases.cuts / 1000).toFixed(1)} s`);
   }
 
-  // vt.py prepares the same video against the fakes (the worker's way), with the same names for reference
-  const vtJob = join(dir, "vt-upload");
+  // what the Python pipeline made of the same video against the fakes (the old worker's way), with the same names
+  // for reference (frozen)
+  const vtPrepared = FROZEN.upload.prepared;
+  const vtPrepareRequests = vtPrepared.requests;
   mocks.clear();
-  const vtPrepared = JSON.parse(await pyAsync("prepare_fixture.py", "prepare", vtJob, files[`videos/${UPLOAD.video}.mp4`], "--eleven", mocks.elevenUrl,
-                                              "--claude", mocks.claudeUrl, "--reference", UPLOAD.reference));
-  const vtPrepareRequests = mocks.requests.splice(0);
   const pb2 = await prepared();
   pb2.submit("e2e-browser");
   const up = await page.evaluate((o) => window.runPrepare(o), { ...UPLOAD, status: "preparing", withFile: true, upload: true });
@@ -457,25 +448,23 @@ try {
   const ourAnalysis = JSON.parse(readFileSync(analysisPath, "utf8"));
   const prepDiffs = jsonDiffs(ourAnalysis, vtPrepared.analysis);
   console.log(`  prepared the upload in ${(up.ms / 1000).toFixed(1)} s: ${up.stages.join(" -> ")}; ${ourPrepareRequests.length} paid calls ` +
-    `(vt.py: ${vtPrepareRequests.length}); names fixed: ${pb2.row.names_fixed.join("; ")}`);
+    `(the Python pipeline: ${vtPrepareRequests.length}); names fixed: ${pb2.row.names_fixed.join("; ")}`);
   if (prepDiffs.length) console.log(`  first differences: ${prepDiffs.slice(0, 5).join("; ")}`);
   report({
     "upload: ready for review": up.status === "needs_review" && pb2.row.status === "needs_review",
-    "upload: analysis.json as vt.prepare's": prepDiffs.length === 0,
-    "upload: transcript, names and warnings as vt.prepare's": pb2.row.script === vtPrepared.script &&
+    "upload: analysis.json as the frozen one": prepDiffs.length === 0,
+    "upload: transcript, names and warnings as the frozen ones": pb2.row.script === vtPrepared.script &&
       JSON.stringify(pb2.row.names_fixed) === JSON.stringify(vtPrepared.names_fixed) && JSON.stringify(pb2.row.warnings) === JSON.stringify(vtPrepared.warnings),
-    "upload: the same Claude name check as vt.py": ourPrepareRequests.some((q) => q.service === "claude") &&
+    "upload: the same Claude name check as the frozen one": ourPrepareRequests.some((q) => q.service === "claude") &&
       jsonDiffs(ourPrepareRequests.filter((q) => q.service === "claude").map((q) => q.body),
                 vtPrepareRequests.filter((q) => q.service === "claude").map((q) => q.body)).length === 0,
-    "upload: the same speech-to-text and (last) forced alignment as vt.py": ["/v1/speech-to-text", "/v1/forced-alignment"].every((path) =>
+    "upload: the same speech-to-text and (last) forced alignment as the frozen ones": ["/v1/speech-to-text", "/v1/forced-alignment"].every((path) =>
       jsonDiffs(ourPrepareRequests.filter((q) => q.path === path).map((q) => q.body), vtPrepareRequests.filter((q) => q.path === path).map((q) => q.body).slice(-1)).length === 0),
   });
 
   // the person fixes a spelling; the edited transcript is timed again, reading the upload back from storage
   const edited = pb2.row.script.replace("lights.", "lights!");
-  mocks.clear();
-  const vtAligned = JSON.parse(await pyAsync("prepare_fixture.py", "align", vtJob, "--eleven", mocks.elevenUrl, "--script", edited,
-                                             "--warnings", JSON.stringify(vtPrepared.warnings)));
+  const vtAligned = FROZEN.upload.aligned;
   mocks.clear();
   for (const f of ["media.json", "audio.m4a", "audio.wav"]) rmSync(join(store, "u", UPLOAD.userId, UPLOAD.jobId, "prep", f), { force: true });
   pb2.approve(edited, "e2e-browser");
@@ -484,33 +473,36 @@ try {
   console.log(`  timed the edited transcript in ${(al.ms / 1000).toFixed(1)} s: ${al.stages.join(" -> ")}`);
   if (alignDiffs.length) console.log(`  first differences: ${alignDiffs.slice(0, 5).join("; ")}`);
   report({
-    "edited: translating next, as the worker's align decided": al.status === "producing" && pb2.row.status === "producing" && vtAligned.ok,
-    "edited: analysis.json as the worker's align": alignDiffs.length === 0,
+    "edited: translating next, as the old worker's align decided": edited === FROZEN.upload.edited && al.status === "producing" &&
+      pb2.row.status === "producing" && vtAligned.ok,
+    "edited: analysis.json as the old worker's align": alignDiffs.length === 0,
     // the measures come from the analysis already there (as for a project an older worker analyzed)
     "edited: the voiceover read back from storage": al.stages.includes("measuring sound") && !al.stages.includes("measuring cuts"),
   });
 
-  // and produced, built and rendered, against vt.py's produce and CLI render of its own preparation
-  mocks.clear();
-  const vtUp = JSON.parse(await pyAsync("produce_fixture.py", "produce", vtJob, "de", "--claude", mocks.claudeUrl, "--eleven", mocks.elevenUrl, "--render"));
+  // and produced, built and rendered, against the Python pipeline's produce of its own preparation (frozen) and
+  // ffmpeg's render of that plan
+  const vtUp = FROZEN.upload.produced;
   mocks.clear();
   const pu = await page.evaluate((id) => window.runProduce(id), UPLOAD.jobId);
   const upInputs = jsonDiffs(JSON.parse(readFileSync(join(uploadRunFolder, "inputs.json"), "utf8")), vtUp.inputs);
   await page.evaluate(() => window.runBuild("uploaded"));
-  const upPlan = jsonDiffs(JSON.parse(readFileSync(join(dir, "uploaded-plan.json"), "utf8")), JSON.parse(readFileSync(vtUp.plan, "utf8")));
-  const upVoice = voiceParity("uploaded", { inputs: vtUp.inputs_path, plan: vtUp.plan });
+  const upPlan = jsonDiffs(JSON.parse(readFileSync(join(dir, "uploaded-plan.json"), "utf8")), vtUp.plan);
+  const upRef = referenceOf(join(dir, "uploaded-reference"), vtUp.plan, join(uploadRunFolder, "tts"), vtAligned.analysis.base_lufs);
+  const upVoice = voiceParity("uploaded", upRef);
   const uplan = JSON.parse(readFileSync(join(dir, "uploaded-plan.json"), "utf8"));
   const ur = await page.evaluate((src) => window.runE2E("preview", "uploaded", src), `/files/videos/${UPLOAD.video}.mp4`);
-  const uc = JSON.parse(py("vt_fixture.py", "compare", join(dir, "uploaded-preview.mp4"), vtUp.reference));
+  const uc = compareRender(join(dir, "uploaded-preview.mp4"),
+    renderReference(vtUp.plan, files[`videos/${UPLOAD.video}.mp4`], upRef.voice, join(dir, "uploaded-reference.mp4")));
   const ustretched = uplan.beats.some((b) => b.tempo !== 1);
   console.log(`  produced "de" in ${(pu.ms / 1000).toFixed(1)} s: ${pu.stages.join(" -> ")}; preview ${uc.frames} frames, ` +
     `audio offset ${uc.audio_offset}, relative error ${uc.audio_rel_error.toExponential(2)}`);
   if (upInputs.length) console.log(`  first differences: ${upInputs.slice(0, 5).join("; ")}`);
   report({
-    "upload: inputs.json as vt.produce's": upInputs.length === 0,
-    "upload: plan.json as vt.py's": upPlan.length === 0,
-    "upload: voice.wav as vt.py's": upVoice.sameLength && upVoice.maxDiff <= 2 && upVoice.levels.every((l) => Math.abs(l) < 0.5),
-    "upload: preview has every frame, the same as vt.py's": uc.same && uc.frames === uplan.total_frames && ur.encoded === uplan.total_frames,
+    "upload: inputs.json as the frozen one": upInputs.length === 0,
+    "upload: plan.json as the frozen one": upPlan.length === 0,
+    "upload: voice.wav as ffmpeg's": upVoice.sameLength && upVoice.maxDiff <= 2 && upVoice.levels.every((l) => Math.abs(l) < 0.5),
+    "upload: preview has every frame, the same as the reference render": uc.same && uc.frames === uplan.total_frames && ur.encoded === uplan.total_frames,
     "upload: voice lined up and matching": ustretched || (Math.abs(uc.audio_offset) <= 1 && uc.audio_rel_error < 0.01),
   });
 } finally {

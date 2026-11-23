@@ -1,17 +1,19 @@
-// The prepare half (lib/prepare: transcribe, the name check, forced alignment and the analysis) against
-// scripts/vt.py, with no paid calls: vt.prepare (as the worker ran it) and the prepare steps run against the same fake
-// ElevenLabs and Claude (test/mocks.mjs) on test videos (test/videos.mjs), and must send the same requests and end
-// with the same analysis.json (vt.portable_analysis), transcript, names_fixed and warnings. The steps get what vt.py
-// measured of each video (length, frame rate, size, cuts, loudness) and the audio it extracted, as prep/media.json and
-// prep/audio.m4a, so this checks the server half alone; test/e2e checks what the browser measures. Timing an edited
-// transcript again is compared with the worker's align (a spelling fix passes; changed words go back to review).
-// Single functions (split_beats, script_from_words, norm, SequenceMatcher, the name check's prompt) are compared
-// with vt.py's own answers.
+// The prepare half (lib/prepare: transcribe, the name check, forced alignment and the analysis) against the old Python
+// pipeline, with no paid calls. The Python pipeline prepared test videos (test/videos.mjs) against the fake
+// ElevenLabs and Claude (test/mocks.mjs), and what it measured, sent and made is frozen in
+// test/fixtures/prepare-parity.json (see "Tests" in web/README.md). The prepare steps run here against the same fakes,
+// fed the same measures (length, frame rate, size, cuts, loudness) as prep/media.json and the voiceover ffmpeg
+// extracts as prep/audio.m4a, so this checks the server half alone (test/scenes.test.ts, test/probe.test.ts and
+// test/e2e check the measuring against ffmpeg). They must send the same requests and end with the same
+// analysis.json, transcript, names_fixed and warnings. Timing an edited transcript again is compared with the old
+// worker's align (a spelling fix passes; changed words go back to review). Single functions (split_beats,
+// script_from_words, norm, SequenceMatcher, the name check's prompt) are compared with the Python pipeline's frozen
+// answers.
 //
-// Needs ffmpeg and uv; skipped without them.
+// Needs ffmpeg; skipped without it.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,30 +27,34 @@ import { alignStep, analysisKey, mediaStep, namesStep, prepKey, transcribeStep, 
 import { STT_MODEL } from "../lib/produce/config";
 import { memoryStore } from "./produce-harness";
 import { startMocks } from "./mocks.mjs";
+import { voiceover } from "./reference.mjs";
 import { makeVideo, SPOKEN } from "./videos.mjs";
 
-const FIXTURE = resolve(__dirname, "prepare_fixture.py");
-const has = (cmd: string, arg = "-version") => {
+const ready = (() => {
   try {
-    execFileSync(cmd, [arg], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-};
-const ready = has("ffmpeg") && has("uv", "--version");
-const UV = ["run", "-q", "--no-project", "--with", "requests", "--with", "anthropic", "python", FIXTURE];
-const py = (args: string[], input?: string) => execFileSync("uv", [...UV, ...args], { encoding: "utf8", maxBuffer: 1 << 28, input });
-/** The same without blocking: the fakes answer from this process. */
-const pyAsync = (args: string[]) => new Promise<string>((res, rej) =>
-  execFile("uv", [...UV, ...args], { encoding: "utf8", maxBuffer: 1 << 28 }, (err, out, stderr) => (err ? rej(new Error(`${err.message}\n${stderr}`)) : res(out))));
+})();
 
 type Mocks = Awaited<ReturnType<typeof startMocks>> & {
   requests: { service: string; path: string; body: Record<string, unknown>; audio?: { name: string; type: string; probe: { duration: number; channels: number } | null } }[];
 };
+type Req = { service: string; path: string; body: Record<string, unknown> };
+type VtPrepared = {
+  error: string | null; usage: { service: string; input_tokens?: number }[]; analysis: { video: { dur: number }; anchors: { t: number }[] };
+  script: string; base_lang: string; names_fixed: string[]; warnings: string[];
+};
+type Measured = { dur: number; fps: number; width: number; height: number; base_lufs: number; cuts: number[] };
+const FROZEN: {
+  prepare: Record<string, { measured: Measured; vt: VtPrepared; requests: Req[] }>;
+  align: Record<string, { script: string; warnings: string[]; vt: { ok: boolean; script: string; warnings: string[]; analysis: unknown }; requests: Req[] }>;
+  calls: { items: unknown[]; answers: unknown[] };
+} = JSON.parse(readFileSync(resolve(__dirname, "fixtures/prepare-parity.json"), "utf8"));
 
 const USER = "user-1", JOB = "job-1";
-let runs = 0;
 
 /** What the route would load: one project, in memory. */
 function job(store: ReturnType<typeof memoryStore>, o: Partial<PrepJob> = {}): PrepJob {
@@ -56,7 +62,7 @@ function job(store: ReturnType<typeof memoryStore>, o: Partial<PrepJob> = {}): P
 }
 const json = (store: ReturnType<typeof memoryStore>, key: string) => JSON.parse(new TextDecoder().decode(store.files.get(key)!));
 
-describe.skipIf(!ready)("lib/prepare against vt.py", () => {
+describe.skipIf(!ready)("lib/prepare against the frozen Python runs", () => {
   let dir: string;
   let m: Mocks;
   beforeAll(async () => {
@@ -71,17 +77,15 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
   const claude = () => new Anthropic({ apiKey: "fake-claude-key", baseURL: m.claudeUrl, maxRetries: 0 });
   const eleven = () => ({ apiKey: "fake-eleven-key", api: m.elevenUrl });
 
-  /** vt.prepare on `video`, then the same with the steps; both against the fakes. */
+  /** The frozen Python run of `video`, then the same with the steps against the fakes. */
   async function both(name: string, reference: string | null, speech?: unknown) {
+    const frozen = FROZEN.prepare[`${name}|${reference}|${JSON.stringify(speech ?? null)}`];
+    if (!frozen) throw new Error(`no frozen run of ${name} with ${reference}`);
     const video = makeVideo(dir, name);
     m.setSpeech(speech);
     m.clear();
-    const jobDir = join(dir, `vt-${name}-${++runs}`);
-    const vt = JSON.parse(await pyAsync(["prepare", jobDir, video, "--eleven", m.elevenUrl,
-                                         "--claude", m.claudeUrl, ...(reference ? ["--reference", reference] : [])]));
-    const vtRequests = m.requests.splice(0);
-    const measured = JSON.parse(py(["media", video]));
-    const audio = readFileSync(vt.audio);
+    const measured = frozen.measured;
+    const audio = readFileSync(voiceover(video, join(dir, `${name}-voiceover.m4a`)));
     const store = memoryStore();
     const media: Media = { format: MEDIA_FORMAT, dur: measured.dur, fps: measured.fps, width: measured.width, height: measured.height,
                            base_lufs: measured.base_lufs, cuts: measured.cuts, audio: "audio.m4a", audio_bytes: audio.length, from: "browser" };
@@ -95,14 +99,14 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     const n = await namesStep(j, claude());
     const a = await alignStep(j, eleven(), { prepared: async (p) => void (prepared = p), aligned: async () => { throw new Error("not aligning"); } });
     const ours = m.requests.splice(0);
-    return { vt, vtRequests, ours, store, prepared: prepared as Prepared | null, t, n, a, usage, media, video, jobDir };
+    return { vt: frozen.vt, vtRequests: frozen.requests, ours, store, prepared: prepared as Prepared | null, t, n, a, usage, media, video };
   }
 
-  const fields = (rs: Mocks["requests"], path: string) => rs.filter((r) => r.path === path).map((r) => r.body);
-  const claudeBodies = (rs: Mocks["requests"]) => rs.filter((r) => r.service === "claude").map((r) => r.body);
+  const fields = (rs: Req[], path: string) => rs.filter((r) => r.path === path).map((r) => r.body);
+  const claudeBodies = (rs: Req[]) => rs.filter((r) => r.service === "claude").map((r) => r.body);
 
   for (const [name, reference] of [["cuts", "Nanoleaf lights"], ["cuts", null], ["ntsc", "Nanoleaf"], ["rotated", null], ["steps", "Nanoleaf"]] as const) {
-    it(`${name}${reference ? " with names" : ""}: the same requests and analysis.json as vt.prepare`, async () => {
+    it(`${name}${reference ? " with names" : ""}: the same requests and analysis.json as the Python pipeline`, async () => {
       const r = await both(name, reference);
       expect(r.vt.error).toBeNull();
       // the same analysis, to the last bit
@@ -115,7 +119,7 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
       expect(fields(r.ours, "/v1/speech-to-text")).toEqual([{ model_id: STT_MODEL, tag_audio_events: "false", timestamps_granularity: "word" }]);
       expect(claudeBodies(r.ours)).toEqual(claudeBodies(r.vtRequests));
       const vtAligns = fields(r.vtRequests, "/v1/forced-alignment");
-      expect(fields(r.ours, "/v1/forced-alignment")).toEqual(vtAligns.slice(-1)); // vt.py aligned twice when names were fixed
+      expect(fields(r.ours, "/v1/forced-alignment")).toEqual(vtAligns.slice(-1)); // the Python pipeline aligned twice when names were fixed
       expect(vtAligns.length).toBe(reference ? 2 : 1);
       // the audio sent is the voiceover: audio/mp4, mono, as long as the video
       for (const q of r.ours.filter((x) => x.audio)) {
@@ -143,7 +147,7 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     expect(m.requests).toEqual([]);
   });
 
-  it("a name check that changes more than names is refused, as vt.py does", async () => {
+  it("a name check that changes more than names is refused, as the Python pipeline did", async () => {
     const words = SPOKEN.map(([text, start, end]) => ({ text: text === "welcome" ? "REWRITE" : text, start, end }));
     const r = await both("cuts", "Nanoleaf", { language_code: "eng", words });
     expect(r.vt.names_fixed).toEqual([]);
@@ -151,7 +155,7 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     expect(json(r.store, analysisKey(job(r.store)))).toEqual(r.vt.analysis);
   });
 
-  it("a voiceover with no words fails with a plain message (vt.py crashed on it)", async () => {
+  it("a voiceover with no words fails with a plain message (the Python pipeline crashed on it)", async () => {
     const store = memoryStore();
     const j = job(store);
     const media: Media = { format: MEDIA_FORMAT, dur: 2, fps: 30, width: 720, height: 1280, base_lufs: -70, cuts: [],
@@ -173,10 +177,11 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
       const r = await both("cuts", "Nanoleaf lights");
       const script = edit(r.vt.script);
       expect(script).not.toBe(r.vt.script);
+      const frozen = FROZEN.align[what];
+      expect(frozen.script).toBe(script);
+      expect(frozen.warnings).toEqual(r.vt.warnings);
+      const vt = frozen.vt;
       m.clear();
-      const vt = JSON.parse(await pyAsync(["align", r.jobDir, "--eleven", m.elevenUrl, "--script", script,
-                                           "--warnings", JSON.stringify(r.vt.warnings)]));
-      const vtRequests = m.requests.splice(0);
       const j = job(r.store, { status: "aligning", baseLang: r.vt.base_lang, script, warnings: r.vt.warnings,
                                analysisKey: analysisKey(job(r.store)) });
       let aligned: Aligned | null = null;
@@ -185,7 +190,7 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
       expect(aligned).toEqual({ script: vt.script, warnings: vt.warnings, ok: vt.ok });
       expect(a.status).toBe(ok ? "producing" : "needs_review");
       expect(json(r.store, analysisKey(j))).toEqual(vt.analysis);
-      expect(fields(m.requests, "/v1/forced-alignment")).toEqual(fields(vtRequests, "/v1/forced-alignment"));
+      expect(fields(m.requests, "/v1/forced-alignment")).toEqual(fields(frozen.requests, "/v1/forced-alignment"));
       // asked again (the save failed, say): the same decision, nothing paid
       m.clear();
       let again: Aligned | null = null;
@@ -220,7 +225,7 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     // a project an older worker analyzed: the measures come from its analysis.json, only the voiceover is needed
     const old = memoryStore();
     const k = job(old, { status: "aligning", analysisKey: analysisKey(job(old)) });
-    const vtAnalysis = (await both("film", null)).vt.analysis;
+    const vtAnalysis = FROZEN.prepare["film|null|null"].vt.analysis;
     await old.put(analysisKey(k), JSON.stringify(vtAnalysis), "application/json");
     expect(await mediaStep(k, { ...links, size: async (key) => (key.endsWith("/source") ? 1 : old.files.get(key)?.length ?? null) }, { phase: "start" }))
       .toMatchObject({ ready: false, measure: false });
@@ -235,8 +240,10 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
     // the video gone from storage (30 days)
     await expect(mediaStep(job(memoryStore()), { ...links, size: async () => null }, { phase: "start" })).rejects.toThrow(/no longer in storage/);
   });
+});
 
-  it("single functions as vt.py's", () => {
+describe("single functions against the Python pipeline's frozen answers", () => {
+  it("split_beats, script_from_words, norm, SequenceMatcher and the name check's prompt", () => {
     const texts = [
       "One. Two! Three? Four… five", "a\n\nb\n\n\nc", "line one\nline two\n", "  spaced   out  \n\n  x  ", "",
       "Mr. Smith goes. To Washington", "only one", "dup\r\n\r\ndup", "tabs\tand em spaces. ok",
@@ -264,7 +271,9 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
       { call: "names_prompt", beats: ["Hello and welcome to Nano Leaf lights.", "Try them."], base_lang: "en", reference: "  Nanoleaf\n" },
       { call: "names_prompt", beats: ["Hola."], base_lang: "es", reference: null },
     ];
-    const theirs = JSON.parse(py(["calls"], JSON.stringify(calls)));
+    // the frozen answers are for exactly these calls
+    expect(JSON.parse(JSON.stringify(calls))).toEqual(FROZEN.calls.items);
+    const theirs = FROZEN.calls.answers as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
     let k = 0;
     for (const t of texts) expect(splitBeats(t)).toEqual(theirs[k++]);
     for (const w of words) expect(scriptFromWords(w, ANALYZE.beat_pause)).toBe(theirs[k++]);
@@ -277,14 +286,5 @@ describe.skipIf(!ready)("lib/prepare against vt.py", () => {
       expect(NAMES_SYSTEM).toBe(t.system);
       expect(NAMES_SCHEMA).toEqual(t.schema);
     }
-  });
-
-  it("the settings are config.default.toml's", () => {
-    const toml = readFileSync(resolve(__dirname, "../../config.default.toml"), "utf8");
-    const value = (key: string) => /^(\S+)/.exec(new RegExp(`^${key}\\s*=\\s*(.*)$`, "m").exec(toml)![1])![1];
-    expect(Number(value("scene_threshold"))).toBe(ANALYZE.scene_threshold);
-    expect(Number(value("beat_pause"))).toBe(ANALYZE.beat_pause);
-    expect(value("fix_names")).toBe(String(ANALYZE.fix_names));
-    expect(JSON.parse(value("stt_model"))).toBe(STT_MODEL);
   });
 });

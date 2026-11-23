@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// Unit tests for the parts that are plain logic (frame selection, sizes, file formats). They run in Node;
-// test/ffmpeg-frames.test.ts also needs ffmpeg and uv, and is skipped without them.
+// Unit tests for the parts that are plain logic (frame selection, sizes, file formats), and checks against ffmpeg.
+// They run in Node; the checks against ffmpeg need ffmpeg and ffprobe, and are skipped without them.
 export default defineConfig({
   test: {
     environment: "node",
