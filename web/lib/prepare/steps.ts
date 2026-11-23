@@ -121,7 +121,8 @@ export type MediaRequest =
 export async function mediaStep(j: PrepJob, links: Links, req: MediaRequest): Promise<MediaResult> {
   const have = await loadMedia(j, links);
   if (have) return { ready: true, dur: have.dur, cuts: have.cuts.length };
-  // an older worker's analysis.json has the measures; then only the voiceover is needed
+  // an older worker's analysis.json has the measures; then only the voiceover is needed (media.json from:
+  // "analysis"). Remove after 2026-12-23, when no project the worker prepared is left (see Media.from)
   const derived = await savedAnalysis(j);
   if (req.phase === "start") {
     if ((await links.size(sourceKey(j))) === null) throw new ProduceError(GONE, { status: 410 });

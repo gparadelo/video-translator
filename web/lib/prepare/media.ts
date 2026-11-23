@@ -19,7 +19,11 @@ export type Media = VideoMeasures & {
   cuts: number[];
   audio: AudioFile;
   audio_bytes: number;
-  /** where these came from: "browser" (measured), or "analysis" (an older worker's analysis.json) */
+  /**
+   * where these came from: "browser" (measured), or "analysis" (an older worker's analysis.json). Remove "analysis"
+   * after 2026-12-23 (30 days after the deploy that removed the worker: no project it prepared is left), with the
+   * path in mediaStep (lib/prepare/steps.ts) that makes it.
+   */
   from: "browser" | "analysis";
   /** for the person and for debugging: frames read, whether the frame rate varies */
   frames?: number;

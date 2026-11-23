@@ -1,9 +1,6 @@
 // Shared by the screens (browser side): what a job (a project: a video, a title, or both) looks like, and
 // the words we show for it.
 
-/** jobs.progress: what an older worker last reported (unused since the browser prepares videos itself). */
-export type Progress = { stage?: string; lang?: string; done?: number; total?: number };
-
 export type Job = {
   id: string;
   name: string;
@@ -15,7 +12,6 @@ export type Job = {
   script: string | null;
   names_fixed: string[];
   warnings: string[];
-  progress: Progress | null;
   error: string | null;
   source_filename: string | null;
   source_bytes: number | null;
@@ -31,13 +27,17 @@ export type Output = {
   // pending: asked for, the job page starts a run; running: the job page is making it (lib/produce).
   // voiced: the voice is recorded (inputs_key); the browser builds the plan and the voice track
   // (lib/pipeline). ready: plan and voice track are there; the browser renders the video (lib/render).
-  // done: rendered by an older worker (output_key is the full video). failed: flags[0] says why.
+  // done: rendered by an older worker (output_key is the full video; remove after 2026-12-23, see below).
+  // failed: flags[0] says why.
   status: "pending" | "running" | "voiced" | "ready" | "done" | "failed";
   /** the run of this language the files belong to; a new translation starts a new one */
   generation: number;
   inputs_key: string | null;
   seconds: number | null;
   flags: string[];
+  // a video an older worker rendered (status done), kept until its files are past R2's 30-day lifecycle. Remove
+  // after 2026-12-23 (30 days after the deploy that removed the worker), with "done" and its download
+  // (app/jobs/[id]/page.tsx, app/api/jobs/[id]/files/[lang]/route.ts)
   output_key: string | null;
   output_bytes: number | null;
   preview_key: string | null; // the 720p preview, made by the browser (or by an older worker)
