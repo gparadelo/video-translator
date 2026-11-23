@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ANALYZE } from "../lib/prepare/config";
 import { ALIGN, cutsFromScores, initFilter, LumaScaler, ptsTime, rotatePlane, SceneScorer, sceneSize } from "../lib/prepare/scenes";
 import { frameTimes } from "./media-node";
 import { media, sceneScores } from "./reference.mjs";
@@ -112,8 +113,8 @@ describe.skipIf(!ready)("scene cuts against ffmpeg", () => {
         expect(ptsTime(o.t)).toBe(Number(theirs[i][0]));
       });
 
-      const ff = media(path);
-      const cuts = cutsFromScores(ours, 0.2, ff.dur, ff.fps);
+      const ff = media(path, ANALYZE.scene_threshold);
+      const cuts = cutsFromScores(ours, ANALYZE.scene_threshold, ff.dur, ff.fps);
       expect(cuts).toEqual(ff.cuts);
       const expected = (VIDEOS[name] as { cuts: number[] | null }).cuts;
       if (expected) expect(cuts.map((c) => Math.round(c * 100) / 100)).toEqual(expected);

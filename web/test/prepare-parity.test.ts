@@ -287,4 +287,11 @@ describe("single functions against the Python pipeline's frozen answers", () => 
       expect(NAMES_SCHEMA).toEqual(t.schema);
     }
   });
+
+  // The old config.default.toml's [analyze] and stt_model (the frozen runs were made with them). scene_threshold is
+  // only read in the browser (lib/prepare/local.ts), so no other check here would notice it change.
+  it("the settings are the old config.default.toml's", () => {
+    expect(ANALYZE).toEqual({ scene_threshold: 0.2, beat_pause: 1.0, fix_names: true });
+    expect(STT_MODEL).toBe("scribe_v2");
+  });
 });
