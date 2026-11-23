@@ -52,6 +52,6 @@ cd web
 cp .env.example .env.local     # see docs/web-setup.md
 pnpm install
 pnpm dev                       # http://localhost:3000
-pnpm test                      # needs ffmpeg and ffprobe
+pnpm test                      # needs ffmpeg and ffprobe 9.0 (web/README.md, "Tests")
 pnpm e2e                       # needs ffmpeg and Google Chrome
 ```

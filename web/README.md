@@ -69,7 +69,15 @@ pnpm e2e    # in headless Chrome: checks, measures and prepares test videos, pro
 ```
 
 Both need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg`); `pnpm e2e` also needs Google Chrome
-(`CHROME_PATH` or `--chrome`). No Python. The tests that need ffmpeg are skipped without it.
+(`CHROME_PATH` or `--chrome`). No Python. Without ffmpeg both stop with a message (`test/ffmpeg-check.mjs`);
+`VT_SKIP_FFMPEG=1 pnpm test` runs only the plain unit tests and says that everything else was skipped.
+
+**ffmpeg version: 9.0** (Homebrew's 9.0.2 when the references were frozen, with LAME 4.0 and x264 r3222). Most checks compare the
+app with ffmpeg run at that moment, so they hold on any version, but a few results also depend on ffmpeg's own
+code: the scene scores (the port follows ffmpeg 9's swscale), and the test videos and fake voice clips the tests
+encode (x264, ffmpeg's AAC encoder, libmp3lame), whose measures and lengths are in the frozen references. With
+another version the tests print a warning first; a failing scene score, cut, loudness or clip length there may be
+that ffmpeg's doing, not the app's: check with ffmpeg 9.0 before changing code or fixtures.
 
 What the tests compare against:
 

@@ -34,6 +34,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { chromium } from "playwright-core";
 import { createServer } from "vite";
+import { checkFfmpeg } from "../ffmpeg-check.mjs";
 import { startMocks } from "../mocks.mjs";
 import { compareRender, frameVideo, media, renderReference, toneClip, voiceover, voiceTrack } from "../reference.mjs";
 import { makeVideo, VIDEOS } from "../videos.mjs";
@@ -50,6 +51,7 @@ const { values: opt } = parseArgs({
   },
 });
 
+checkFfmpeg({ allowSkip: false }); // stops without ffmpeg; warns when it isn't the version the references were made with
 const FROZEN = JSON.parse(readFileSync(join(here, "..", "fixtures", "e2e.json"), "utf8"));
 const dir = mkdtempSync(join(tmpdir(), "vt-e2e-"));
 console.log(`fixture jobs in ${dir}`);

@@ -363,7 +363,8 @@ against the one ffmpeg makes from the same plan (`atrim` at exact samples, `atem
   above the limit.
 
 ## Tests
-In `web/`, with `ffmpeg` and `ffprobe` installed (no Python): `pnpm test` runs the unit tests and the checks
+In `web/`, with `ffmpeg` and `ffprobe` 9.0 installed (no Python; another version runs with a warning, see
+"Tests" in [web/README.md](../web/README.md)): `pnpm test` runs the unit tests and the checks
 against ffmpeg and the frozen references (see "Tests" in [web/README.md](../web/README.md)), with fake Claude and
 ElevenLabs (`test/mocks.mjs`: deterministic, so the same request gets the same answer):
 - the browser's frame selection against ffmpeg's clip retiming command (`test/ffmpeg-frames.test.ts`);
