@@ -224,7 +224,9 @@ step 7):
 
 8. **Clean up the Mac and the keys:** delete `worker/.env` from the Mac (or the whole checkout), and the Supabase
    secret (service role) key from anywhere it was kept; nothing uses it any more. Delete or roll it in Supabase
-   (Project Settings -> API Keys) to be sure: since #6 it can't read the tables anyway.
+   (Project Settings -> API Keys) to be sure: since #6 it can't read the tables anyway. If you used the Claude
+   Code plugin (`video-translator`, from this repository's marketplace), it's gone too: in Claude Code,
+   `/plugin uninstall video-translator@video-translator` and `/plugin marketplace remove video-translator`.
 
 **If something goes wrong:**
 - Before step 6 everything can go back as it was: start the worker again on the Mac from `main`
