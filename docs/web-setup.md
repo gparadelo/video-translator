@@ -57,6 +57,7 @@ in Vercel (Settings -> Environment Variables, never with `NEXT_PUBLIC_`). Keep i
 secret. If you change it, every saved key stops working and everyone has to save theirs again.
 
 ## 3. Run the site
+Locally you need Node.js 20.9 or later and pnpm 10 (`corepack enable` sets it up from `web/package.json`).
 ```
 cd web
 cp .env.example .env.local     # fill in the values from steps 1, 2 and 2b
@@ -153,35 +154,88 @@ made from the recorded beats, and Claude rewrites the beats that don't fit (up t
 
 ## Upgrading from the worker setup
 This is the path from `main` as it was with the worker on a Mac (migrations up to `20261122000000_user_keys.sql`,
-per-person keys already working) to the web app alone. It takes the five pull requests of the browser pipeline,
-#2 to #6, in one go. Pick a quiet moment: the site may show errors for the few minutes between the migrations and
-the last deploy.
+per-person keys already working) to the web app alone: the five pull requests of the browser pipeline, #2 to #6,
+and their five migrations. Only steps 6 and 7 are the cut-over. Between them the site still runs the old code on
+the new database: pages open, but nothing new starts (no worker); projects are picked up after step 7. That window
+is the migrations plus one Vercel build, a few minutes. Pick a quiet moment and tell the others not to use the site
+then.
 
-> **Stop the worker and remove its service before you merge #6.** #6 deletes `worker/install-service.sh`, the
-> script that removes the launchd service. Run `worker/install-service.sh remove` on the Mac first (step 1), from a
-> checkout that still has it.
+Why this way: the old code needs the worker and the old database; the new code needs the new database. Deploying
+the five pull requests one at a time, each with its migration, would mean keeping (and updating) the worker
+through four in-between versions. And merging them into `main` one after another would deploy five times, the
+first four against a database that has moved on. So everything is merged into one branch first (no deploy), the
+database is migrated, and `main` gets it all in one merge: one deploy.
 
-1. **Stop the worker for good.** Wait until no project is "Transcribing", "Translating" or "Rendering" on the
-   worker, then on the Mac, in the repository: `worker/install-service.sh remove` (or Ctrl-C if it runs in a
-   terminal). Check it's gone: `launchctl list | grep videotranslator` prints nothing. (Already merged and pulled?
-   The same by hand: `launchctl bootout gui/$(id -u)/com.videotranslator.worker` and
-   `rm ~/Library/LaunchAgents/com.videotranslator.worker.plist`.)
+**Before** (nothing here changes the live site, except that once the worker is stopped, new videos wait for
+step 7):
+
+1. **Stop the worker for good.** Wait until no project is "Transcribing", "Translating" or "Rendering", then on
+   the Mac, in the repository (still on `main`): `worker/install-service.sh remove` (or Ctrl-C if it runs in a
+   terminal). Do this before pulling anything newer: #6 deletes that script, and launchd would keep restarting a
+   worker that isn't there. *Check:* `launchctl list | grep videotranslator` prints nothing. (Already pulled? By
+   hand: `launchctl bootout gui/$(id -u)/com.videotranslator.worker` and
+   `rm ~/Library/LaunchAgents/com.videotranslator.worker.plist`.) Keep `worker/.env` until the end: it's what you'd
+   need to start the worker again (rolling back, below).
 2. **R2 CORS:** replace the bucket's CORS policy with the one in step 2 above (it adds the `range` header and the
-   exposed headers the browser needs to read the video in pieces).
+   exposed headers the browser needs to read the video in pieces; the old site doesn't mind them).
 3. **Vercel:** make sure Fluid compute is on (Settings -> Functions; step 3 above). `SECRETS_KEY` stays as it is.
-4. **Database:** in the Supabase SQL Editor, run these, in this order, each in full:
-   1. `supabase/migrations/20261123000000_browser_render.sql` (#2)
-   2. `supabase/migrations/20261124000000_browser_plan.sql` (#3)
-   3. `supabase/migrations/20261125000000_browser_produce.sql` (#4)
-   4. `supabase/migrations/20261126000000_browser_prepare.sql` (#5)
-   5. `supabase/migrations/20261127000000_remove_worker.sql` (#6)
-5. **Merge and deploy,** straight after: merge #2 into `main`, then #3, #4, #5 and #6, each into `main` once the
-   one before is merged (GitHub moves the next one's base to `main` when the branch below it is deleted; otherwise
-   change it by hand). Vercel deploys each merge; the last one, with #6, is the one that has to be live. Check it
-   in Vercel's Deployments, then open the site and a project.
-6. **Clean up the Mac and the keys:** delete `worker/.env` from the Mac (or the whole checkout), and the Supabase
-   secret (service role) key from anywhere it was kept; nothing uses it any more, and you can roll it in
-   Supabase (Project Settings -> API) to be sure.
+4. **Merge the stack into one branch, top down.** On GitHub, merge #6, then #5, #4 and #3, each into its own base
+   branch (as they are: #6 into `browser-pipeline/4-analysis`, and so on), with "Create a merge commit". None of
+   these touches `main`, so nothing is deployed. Now #2 (`browser-pipeline/1-render` -> `main`) holds the whole
+   stack. Don't change any base to `main`. *Check:* the "Files changed" of #2 deletes `worker/` and adds all five
+   migrations, and its Vercel preview build (Vercel builds every branch push by default) is "Ready": that's the
+   code `main` will get.
+5. **Back up the database** (the only way back to the worker after the next step): on a paid plan, Database ->
+   Backups has last night's; otherwise, with the connection string from the dashboard's **Connect** (session
+   pooler) and `pg_dump` 17 (`brew install postgresql@17`):
+   `pg_dump "<connection string>" --schema=public --format=custom --file=before-web-only.dump`.
+
+**Cut-over:**
+
+6. **Database:** in the Supabase SQL Editor, run these five files in this order, each pasted in full (one run
+   each; the editor runs a file as one transaction, so a file that fails leaves nothing of itself behind):
+   1. `supabase/migrations/20261123000000_browser_render.sql`
+   2. `supabase/migrations/20261124000000_browser_plan.sql`
+   3. `supabase/migrations/20261125000000_browser_produce.sql`
+   4. `supabase/migrations/20261126000000_browser_prepare.sql`
+   5. `supabase/migrations/20261127000000_remove_worker.sql`
+
+   *Check:* this says which ones are in; after all five, every column is `true`:
+   ```sql
+   select
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'job_outputs' and column_name = 'plan_key')   as "1_render",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'job_outputs' and column_name = 'generation') as "2_plan",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'jobs' and column_name = 'analysis_key')      as "3_produce",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'jobs' and column_name = 'runner')            as "4_prepare",
+     to_regclass('public.workers') is null                                                                 as "5_remove_worker";
+   ```
+   If a file fails: stop there, don't run the next ones. The query shows where it stopped; fix what the error says
+   and run that same file again. (A file that already ran fails if run again, e.g. "already exists": harmless.)
+7. **Deploy:** merge #2 into `main` ("Create a merge commit"). Vercel deploys it. *Check:* in Vercel ->
+   Deployments, the production deployment of that merge is "Ready"; then open the site: the header no longer
+   says "Render Mac offline", the project list loads, an older project shows its videos, and a new short video
+   goes through to its transcript.
+
+**After:**
+
+8. **Clean up the Mac and the keys:** delete `worker/.env` from the Mac (or the whole checkout), and the Supabase
+   secret (service role) key from anywhere it was kept; nothing uses it any more. Delete or roll it in Supabase
+   (Project Settings -> API Keys) to be sure: since #6 it can't read the tables anyway.
+
+**If something goes wrong:**
+- Before step 6 everything can go back as it was: start the worker again on the Mac from `main`
+  (`worker/install-service.sh`) and close or leave the merged branches (nothing reached `main`).
+- A migration fails (step 6): see above; the site stays on the old code meanwhile.
+- The deploy fails (step 7): Vercel keeps serving the old site; fix the build and push to `main` again. Don't use
+  Vercel's Instant Rollback to a deployment from before the cut-over: that code needs the worker and the old
+  database, and neither is there any more.
+- Back to the worker after step 6: restore the backup of step 5
+  (`pg_restore --clean --if-exists --dbname "<connection string>" before-web-only.dump`, or the dashboard's
+  restore), revert the merge of #2 on `main`, and start the worker again. Projects made in between are lost.
 
 What happens to projects that were in the middle of something: a video waiting to be transcribed is prepared the
 next time its page is opened; an approved transcript is timed there; a language the worker was translating is
