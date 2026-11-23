@@ -1,5 +1,5 @@
-// Python's number and text behaviour where scripts/vt.py's results depend on it, so the timing plan built here
-// comes out exactly as vt.py's (vt.py is the reference until the Python pipeline is removed).
+// Python's number and text behaviour where the old Python pipeline's results depended on it, so the timing plans,
+// cache keys and request bodies made here are exactly the ones it made (and the files it left in storage still fit).
 
 import { pyFixed } from "../render/numbers";
 

@@ -1,4 +1,4 @@
-// Scene cuts as scripts/vt.py finds them (vt.detect_cuts):
+// Scene cuts as the old Python pipeline finds them:
 //
 //   ffmpeg -i <video> -an -vf "scale=270:-2,select='gt(scene,<threshold>)',metadata=print" -f null -
 //
@@ -283,7 +283,7 @@ export function cutsFromScores(frames: { t: number; score: number }[], threshold
 
 /**
  * The time as metadata=print writes it (av_ts_make_time_string2: "%.6f" for times from 1 s, more decimals below,
- * trailing zeros dropped) and vt.py reads it back with float().
+ * trailing zeros dropped) and the old Python pipeline reads it back with float().
  */
 export function ptsTime(t: number): number {
   if (t === 0) return 0;

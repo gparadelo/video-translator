@@ -5,7 +5,7 @@
 //
 //   - length and frame rate as ffprobe reports them, the shown size (probe.ts, timing.ts)
 //   - the loudness of the original sound, as `ffmpeg -af ebur128` (lib/pipeline/loudness.ts LoudnessMeter)
-//   - the voiceover for speech-to-text, as vt.py's base_vo.m4a (`-vn -ac 1 -c:a aac -b:a 128k`): mono (stereo
+//   - the voiceover for speech-to-text, as the old Python pipeline's base_vo.m4a (`-vn -ac 1 -c:a aac -b:a 128k`): mono (stereo
 //     mixed down as ffmpeg does, (L + R) * 0.7071), AAC 128 kb/s in MP4; WAV when the browser has no AAC encoder
 //   - the cuts (scenes.ts): every frame's luma plane, rotated and scaled like ffmpeg's `scale=270:-2` in a few Web
 //     Workers (scene-worker.ts), scored in order

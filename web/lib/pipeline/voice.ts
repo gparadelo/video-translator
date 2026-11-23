@@ -1,10 +1,10 @@
-// The finished voice track of one language, as vt.build_voice_track makes it: every beat's TTS clip trimmed to
+// The finished voice track of one language, as ffmpeg made it (test/reference.mjs voiceTrack): every beat's TTS clip trimmed to
 // [clip_in, clip_out], at its tempo, placed at its offset; loudness matched to the original voiceover; limited;
 // made stereo the way ffmpeg does it (`-ac 2`: the mono voice on both channels at -3 dB); exactly
 // total_frames / fps long, 16-bit PCM at 44.1 kHz. Pure: the clips come in already decoded (decode.ts).
 //
 // Each step does the arithmetic ffmpeg does, in the same precision, so with every tempo at 1 the result is
-// vt.py's sample for sample (but for the MP3 decoders' last-bit differences). Where a tempo isn't 1 the stretch
+// ffmpeg's sample for sample (but for the MP3 decoders' last-bit differences). Where a tempo isn't 1 the stretch
 // is wsola.ts instead of atempo, and the limiter is limiter.ts instead of alimiter: close, not identical.
 
 import { LIMITER, SAMPLE_RATE } from "./config";
@@ -49,18 +49,18 @@ export function buildVoice(beats: VoiceBeat[], clips: Float32Array[], totalFrame
     if (b.tempo !== 1.0) part = stretch(part, b.tempo);
     const at = pyRound(b.offset * SR);
     const n = Math.min(part.length, length - at);
-    for (let k = 0; k < n; k++) pcm[at + k] = toS16(part[k]); // later beats overwrite, as in vt.py
+    for (let k = 0; k < n; k++) pcm[at + k] = toS16(part[k]); // later beats overwrite
   });
 
   // loudness of the plain mix (ebur128 reads the 16-bit samples as doubles: x / 32768)
   const measured = lufsOneDecimal(pcm, SR, 1 / 32768);
-  const gainDb = Number(pyFormat(baseLufs - measured, 2)); // vt.voice_filter writes it with 2 decimals
+  const gainDb = Number(pyFormat(baseLufs - measured, 2)); // ffmpeg's volume filter gets it with 2 decimals
   const vol = volumeOf(gainDb);
   // volume works in float: s16 -> float, times the float volume
   const loud = new Float32Array(length); // float values: no precision lost
   for (let k = 0; k < length; k++) loud[k] = Math.fround(Math.fround(pcm[k] / 32768) * vol);
   const limited = limit(loud, SR, LIMITER);
-  // vt.py ends the file with `-t <total, 4 decimals>`: whole microseconds, to the nearest sample
+  // the file ends as ffmpeg's `-t <total, 4 decimals>` ends it: whole microseconds, to the nearest sample
   const us = Math.round(Number(pyFormat(total, 4)) * 1e6);
   const frames = Math.min(length, Math.floor((us * SR + 500_000) / 1_000_000));
   // -ac 2: the same on both channels at M_SQRT1_2, in double, then rounded to 16 bits

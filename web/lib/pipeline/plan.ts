@@ -1,7 +1,7 @@
 // The timing plan of one language: how to cut and retime the original video so every cut lands on its word in
-// the new voice, and where each beat's voice goes. A line-by-line port of scripts/vt.py (beat_timing,
-// build_plan, portable_plan, write_report); the parity tests in test/pipeline-parity.test.ts check it gives the
-// same plan as vt.py. Pure functions: no DOM, no network.
+// the new voice, and where each beat's voice goes. A line-by-line port of the old Python pipeline (beat_timing,
+// build_plan, portable_plan, write_report); test/pipeline-parity.test.ts checks it still gives the plans that
+// pipeline made (frozen in test/fixtures). Pure functions: no DOM, no network.
 
 import type { RenderPlan } from "../render/plan";
 import { PLAN_FORMAT } from "../render/plan";
@@ -170,7 +170,7 @@ export function buildPlan(inputs: PlanInputs, clips: Clip[]): Plan {
   const segLo = baseT.slice(0, -1).map((t, j) => ((baseT[j + 1] - t) * keep) / vmax);
   const segHi = baseT.slice(0, -1).map((t, j) => (baseT[j + 1] - t) / vmin);
 
-  /** Place every cut C[j] within +-tol of its word T[j], honouring each clip's min/max length (see vt.py). */
+  /** Place every cut C[j] within +-tol of its word T[j], honouring each clip's min/max length. */
   const solve = (T: number[]): [number[], [number, number][]] => {
     const n = baseT.length;
     const R: [number, number][] = [[0.0, 0.0]];

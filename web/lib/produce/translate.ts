@@ -1,7 +1,7 @@
-// The translation of one language with Claude: a port of scripts/vt.py's translate path (TRANSLATE_SYSTEM,
+// The translation of one language with Claude: a port of the old Python pipeline's translate path (TRANSLATE_SYSTEM,
 // SCRIPT_SCHEMA, brief_table, check_script, claude_json, write_lang_script, translate_lang, refit_lang). Prompts,
-// schema, model and checks are vt.py's to the character (test/produce-parity.test.ts sends both to the same fake
-// Claude and compares). Server only: it runs in the produce routes, on the person's own Claude key.
+// schema, model and checks are the old Python pipeline's to the character (test/produce-parity.test.ts compares
+// with its frozen requests to the same fake Claude). Server only: it runs in the produce routes, on the person's own Claude key.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { Plan } from "../pipeline/plan";

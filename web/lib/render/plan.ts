@@ -1,5 +1,5 @@
-// plan.json as the worker stores it in R2 (vt.portable_plan): how to cut and retime the source for one language.
-// See "Files in storage" in docs/web-setup.md.
+// plan.json as the plan route stores it in R2 (lib/pipeline/plan.ts portablePlan): how to cut and retime the
+// source for one language. See "Files in storage" in docs/web-setup.md.
 
 import type { Segment } from "./frames";
 
@@ -39,8 +39,8 @@ export function parsePlan(json: unknown): RenderPlan {
 }
 
 /**
- * The size to render at, before rounding to even numbers: the source's size as the worker's ffmpeg sees it
- * (plan.source), like the CLI render. `displayW` x `displayH` is the size this browser shows the source at;
+ * The size to render at, before rounding to even numbers: the source's shown size as it was measured
+ * (plan.source, from analysis.json). `displayW` x `displayH` is the size this browser shows the source at;
  * when its shape disagrees with the plan's (portrait here, landscape there), the rotation was read
  * differently, and the video would come out sideways or squashed.
  */
@@ -48,7 +48,7 @@ export function sourceSize(plan: RenderPlan, displayW: number, displayH: number)
   const { width, height } = plan.source;
   const shape = (w: number, h: number) => Math.sign(w - h);
   if (shape(width, height) * shape(displayW, displayH) < 0)
-    throw new Error("this browser reads the video's rotation differently from the worker Mac, so it can't make this video");
+    throw new Error("this browser reads the video's rotation differently from when the video was measured, so it can't make this video");
   return [width, height];
 }
 

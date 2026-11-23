@@ -1,4 +1,4 @@
-// The spelling of names in a fresh transcript, checked by Claude: a port of scripts/vt.py's fix_names (NAMES_SYSTEM,
+// The spelling of names in a fresh transcript, checked by Claude: a port of the old Python pipeline's fix_names (NAMES_SYSTEM,
 // NAMES_SCHEMA, the prompt, and how the answer is used). The person's "Names in the video" text (jobs.reference)
 // is the reference, as the worker's reference.txt was. Server only (the names route, the person's own Claude key).
 
@@ -36,7 +36,7 @@ export type NamesResult = {
   script: string;
   /** what Claude changed (vt.fix_names' return value: [] when nothing was changed) */
   changed: string[];
-  /** Claude changed more than names: the transcript was kept as it was (vt.py only logs this) */
+  /** Claude changed more than names: the transcript was kept as it was (the old Python pipeline only logs this) */
   refused: boolean;
 };
 

@@ -1,4 +1,4 @@
-// Output sizes and bitrates. Same rules as scripts/vt.py (render_size, scaled_bitrate).
+// Output sizes and bitrates. Same rules as the old Python pipeline (render_size, scaled_bitrate).
 
 import { pyFixed } from "./numbers";
 
@@ -12,7 +12,7 @@ export type Quality = {
   bitrate: number;
 };
 
-/** The bitrate in config.default.toml ([render] video_bitrate): for 4K HEVC, scaled down for smaller sizes. */
+/** The bitrate for 4K HEVC (the old CLI render's), scaled down for smaller sizes. */
 export const BASE_BITRATE = 20_000_000;
 /** H.264 needs about half as many bits again as HEVC for the same picture. */
 export const AVC_FACTOR = 1.5;

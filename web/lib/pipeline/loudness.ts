@@ -1,5 +1,5 @@
 // Integrated loudness (ITU-R BS.1770 / EBU R128), measured the way ffmpeg's ebur128 filter measures it, because
-// vt.py matches the new voice to the original with `ebur128` (vt.lufs): K-weighting (the BS.1770 shelf and
+// the voice track has always been matched to the original with `ebur128`: K-weighting (the BS.1770 shelf and
 // high-pass, with the coefficients worked out for the actual sample rate, as libebur128 does), 400 ms blocks
 // every 100 ms (only full ones), an absolute gate at -70 LUFS and a relative gate 10 LU below the mean of the
 // blocks above it. Like ffmpeg, the blocks are counted in a histogram of 0.01 LU steps. Pure; one channel.

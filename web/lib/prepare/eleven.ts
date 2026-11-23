@@ -1,4 +1,4 @@
-// ElevenLabs speech-to-text and forced alignment of the original voiceover: scripts/vt.py's transcribe and
+// ElevenLabs speech-to-text and forced alignment of the original voiceover: the old Python pipeline's transcribe and
 // forced_align (the same form fields and model), with the audio the browser extracted (prep/audio.*), read from
 // storage on the server. Server only: the transcribe and align routes, on the person's own ElevenLabs key.
 
@@ -15,7 +15,7 @@ type Form = { fields: [string, string][]; file: { data: Uint8Array; name: string
 
 /**
  * multipart/form-data written out as Python's requests writes it. (FormData would turn the transcript's newlines into
- * CRLF, as browsers must; vt.py sends them as they are, and the beats are separated by them.)
+ * CRLF, as browsers must; the old Python pipeline sends them as they are, and the beats are separated by them.)
  */
 function multipart(form: Form): { body: Uint8Array; type: string } {
   const boundary = `----vt${crypto.randomUUID().replaceAll("-", "")}`;

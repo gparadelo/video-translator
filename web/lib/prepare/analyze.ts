@@ -1,8 +1,8 @@
-// The analysis of the original voiceover: a port of scripts/vt.py's cmd_analyze (steps 1-4 and its sanity check),
+// The analysis of the original voiceover: a port of the old Python pipeline's cmd_analyze (steps 1-4 and its sanity check),
 // split_beats, script_from_words, norm and ISO3_TO_2. It ties every word of the transcript to its time in the
 // voiceover (from ElevenLabs' forced alignment), every cut of the video to a word, and writes the beats with their
 // {n} markers: analysis.json, format 1 (vt.portable_analysis; lib/produce/analysis.ts reads it). Pure (no I/O):
-// lib/prepare/steps.ts runs it in the align route. test/prepare-parity.test.ts compares it with vt.py's.
+// lib/prepare/steps.ts runs it in the align route. test/prepare-parity.test.ts compares it with the old Python pipeline's.
 
 import type { Anchor } from "../pipeline/inputs";
 import { pyFormat, pyIntList, pyLen, pyRoundTo, pyStrip, words as pyWords } from "../pipeline/py";

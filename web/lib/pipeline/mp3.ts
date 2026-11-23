@@ -1,5 +1,5 @@
 // An MP3's gapless info (the Xing/Info frame and its LAME tag), so a clip decodes to exactly the samples ffmpeg
-// gives vt.py whatever the browser's decoder does with the encoder delay and padding. Chrome and Edge already
+// gives, whatever the browser's decoder does with the encoder delay and padding. Chrome and Edge already
 // cut them as ffmpeg does; a decoder that doesn't hands back every decoded frame, and this cuts them the same
 // way. Pure.
 //

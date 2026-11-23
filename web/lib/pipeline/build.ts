@@ -7,7 +7,7 @@ import { buildPlan, portablePlan, type Plan, type PortablePlan } from "./plan";
 import { buildVoice, encodeWav } from "./voice";
 
 /**
- * A clip's length in seconds as vt.py sees it (ffprobe's format duration): the decoded samples (MP3 encoder
+ * A clip's length in seconds as the old Python pipeline sees it (ffprobe's format duration): the decoded samples (MP3 encoder
  * delay and padding removed, which the browser's decoder does as ffmpeg does), in whole microseconds.
  */
 export function clipDuration(samples: number, sampleRate = SAMPLE_RATE): number {

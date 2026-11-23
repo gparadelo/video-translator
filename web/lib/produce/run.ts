@@ -1,6 +1,6 @@
 // What the job page does for a language that is being made (job_outputs running): it calls the produce steps
 // (lib/produce/steps.ts, through app/api/jobs/<id>/produce/<lang>/...) one after another until the language is
-// voiced, as scripts/vt.py's produce() loop does:
+// voiced, as the old Python pipeline's produce() loop does:
 //
 //   translate -> voice every beat -> fit -> (flags left and rounds left: rewrite -> voice -> fit ...) -> voiced
 //

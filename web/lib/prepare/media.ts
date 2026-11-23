@@ -1,6 +1,6 @@
 // prep/media.json: what the browser measured of the video itself (lib/prepare/local.ts), the part of vt.cmd_analyze
 // that needs the video (ffprobe, the cuts, the loudness), so the routes never need the video: its length and frame
-// rate as ffprobe reports them, the size it's shown at, the cuts (vt.detect_cuts), the loudness (vt.lufs), and which
+// rate as ffprobe reports them, the size it's shown at, the cuts, the loudness, and which
 // file in prep/ is the voiceover sent to ElevenLabs. Written once per project; the routes check it (parseMedia)
 // before using it. Safe in the browser.
 
@@ -9,7 +9,7 @@ import type { VideoMeasures } from "./analyze";
 
 export const MEDIA_FORMAT = 1;
 
-/** The voiceover the browser extracted: AAC in MP4 (as vt.py's base_vo.m4a) or, without an AAC encoder, WAV. */
+/** The voiceover the browser extracted: AAC in MP4 (as the old Python pipeline's base_vo.m4a) or, without an AAC encoder, WAV. */
 export const AUDIO_FILES = { "audio.m4a": "audio/mp4", "audio.wav": "audio/wav" } as const;
 export type AudioFile = keyof typeof AUDIO_FILES;
 

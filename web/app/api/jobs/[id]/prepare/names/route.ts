@@ -7,8 +7,8 @@ import { namesStep } from "@/lib/prepare/steps";
 export const maxDuration = 300;
 
 // POST /api/jobs/<id>/prepare/names {runner}
-//   Claude checks the spelling of names in the transcript, with the project's "Names in the video" as reference
-//   (vt.fix_names), or returns the saved result
+//   Claude checks the spelling of names in the transcript, with the project's "Names in the video" as reference, or
+//   returns the saved result
 // -> {changed, refused, cached}. Errors: {error, retry?, after?, code?}. See lib/prepare/steps.ts.
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/jobs/[id]/prepare/names">) {
   return prepareStep(request, ctx.params, ["preparing"], "anthropic", ({ job, key }) => {

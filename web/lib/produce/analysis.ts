@@ -1,7 +1,7 @@
-// analysis.json: the original video and voiceover as the worker analyzed them (vt.portable_analysis), in R2 at
-// u/<user>/<job>/analysis.json (jobs.analysis_key). The produce steps translate, voice and fit each language
-// from it. See "Files in storage" in docs/web-setup.md. Raise ANALYSIS_FORMAT here and in vt.py when older files
-// can't be read.
+// analysis.json: the original video and voiceover as the align route analyzed them (lib/prepare; older ones by the
+// worker, in the same format), in R2 at u/<user>/<job>/analysis.json (jobs.analysis_key). The produce steps
+// translate, voice and fit each language from it. See "Files in storage" in docs/web-setup.md. Raise
+// ANALYSIS_FORMAT when older files can't be read.
 
 import type { Analysis as InputsAnalysis, Anchor } from "../pipeline/inputs";
 import { ProduceError } from "./errors";
@@ -56,7 +56,7 @@ export function parseAnalysis(json: unknown): Analysis {
   return { ...a, warnings: Array.isArray(a.warnings) ? a.warnings : [] } as Analysis;
 }
 
-/** The analysis as inputs.json carries it (vt.plan_inputs): what the plan is built from. */
+/** The analysis as inputs.json carries it: what the plan is built from. */
 export function inputsAnalysis(A: Analysis): InputsAnalysis {
   return {
     video: { dur: A.video.dur, fps: A.video.fps },

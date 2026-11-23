@@ -47,7 +47,7 @@ const x264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt"
  */
 export const VIDEOS = {
   // hard cuts between very different pictures, 30 fps, portrait 1080x1920, stereo 48 kHz voice; the frame number is
-  // drawn across the top ninth as test/vt_fixture.py's videos have it, so renders of it can be checked frame by frame
+  // drawn across the top ninth as test/reference.mjs frameVideo draws it, so renders of it can be checked frame by frame
   cuts: {
     fps: 30, cuts: [2.5, 4.2, 6.5], dur: 9,
     args: () => [
@@ -62,7 +62,7 @@ export const VIDEOS = {
   // near the threshold (0.2): a still picture (levels 40-181) whose brightness steps by 19, 20 (exactly 0.2: not a
   // cut), 21 and 30 levels, a one-second fade (no cut), then back from black; 25 fps at 1/90000, mono 44.1 kHz
   steps: {
-    // ffmpeg (and vt.py) find 2.52, 3.52, 4, 4.52, 5, 5.52 and 7: after encoding, the 20-level step lands a
+    // ffmpeg finds 2.52, 3.52, 4, 4.52, 5, 5.52 and 7: after encoding, the 20-level step lands a
     // little above 0.2, and the steps back down score highest on the frame after
     fps: 25, cuts: null, dur: 8,
     args: () => [
@@ -167,7 +167,7 @@ export function makeVideo(dir, name) {
   return out;
 }
 
-/** ffprobe's view of a file (streams and format), as vt.probe has it. */
+/** ffprobe's view of a file (streams and format). */
 export function probe(path) {
   return JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", path], { encoding: "utf8" }));
 }

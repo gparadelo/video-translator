@@ -1,6 +1,6 @@
-// Server only. Each person's API keys, encrypted before they reach the database and decrypted only here and
-// in the worker (worker/worker.py: open_secret). Both use SECRETS_KEY: 32 random bytes, base64
-// (`openssl rand -base64 32`). Changing it makes every saved key unreadable; people then save theirs again.
+// Server only. Each person's API keys, encrypted before they reach the database and decrypted only here, with
+// SECRETS_KEY: 32 random bytes, base64 (`openssl rand -base64 32`). Changing it makes every saved key unreadable;
+// people then save theirs again.
 //
 // Format: "v1:" + base64(iv (12 bytes) | ciphertext | tag (16 bytes)), AES-256-GCM. The person's id and the
 // key's name are bound in as associated data, so an encrypted key copied onto someone else's row won't open.

@@ -1,8 +1,8 @@
 // Fake Claude and ElevenLabs APIs for the tests: no paid calls. Both are plain HTTP servers that answer the way
-// the real APIs do (the shapes scripts/vt.py and lib/produce read), deterministically: the same request always
-// gets the same answer, so vt.py (Python SDK, requests) and the web app (TypeScript SDK, fetch) can be run against
-// them one after the other and their requests and results compared. Every request is recorded; failures can be
-// queued (429, 529, 401 ...) to test the retries and the messages.
+// the real APIs do (the shapes lib/prepare and lib/produce read), deterministically: the same request always
+// gets the same answer, so a run of the web app can be compared, request for request, with the frozen runs of the
+// old Python pipeline against them (test/fixtures). Every request is recorded; failures can be queued (429, 529,
+// 401 ...) to test the retries and the messages.
 //
 //   const m = await startMocks();   m.claudeUrl, m.elevenUrl, m.requests, m.fail("claude", {status: 529}), m.close()
 //
@@ -14,7 +14,7 @@
 // speech-to-text and forced alignment take a multipart upload (the file must be audio ffprobe can read; it's
 // recorded with what ffprobe says of it) and "hear" the words set with setSpeech (by default test/videos.mjs's
 // SPOKEN, the tone bursts of the test videos' voiceover). Forced alignment gives words that weren't said a few
-// milliseconds each and a higher loss, so edits that change the words make vt.cmd_analyze warn.
+// milliseconds each and a higher loss, so edits that change the words make the analysis warn.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -91,7 +91,7 @@ function rewriteBeats(prompt, lang) {
 }
 
 /**
- * vt.fix_names' request: "Transcript (...), one beat per line:\n\n1. ...\n2. ...", then the reference text. The fake
+ * The name check's request: "Transcript (...), one beat per line:\n\n1. ...\n2. ...", then the reference text. The fake
  * fixes "Nano Leaf" to "Nanoleaf" when the reference spells it so, and with "REWRITE" in the transcript it changes
  * far more than names (so the answer must be refused).
  */
