@@ -1,11 +1,12 @@
 # Web app setup
 
-The web app has three parts: the site in [web/](../web) (Next.js), a Supabase project (login and database),
-and a Cloudflare R2 bucket (the videos). Everything happens in the web app and the person's browser (desktop
-Chrome or Edge): the browser checks and measures each new video, the app's routes transcribe it, translate and
-voice it with the person's own ElevenLabs and Claude keys, and the browser drives them, builds the voice track
-and renders the videos. There is no worker any more (an older setup's worker Mac can be switched off: see
-"Upgrading to preparing videos in the browser").
+The web app has three parts: the site in [web/](../web) (Next.js, on Vercel), a Supabase project (login and
+database), and a Cloudflare R2 bucket (the videos). Everything happens in the web app and the person's browser
+(desktop Chrome or Edge): the browser checks and measures each new video, the app's routes transcribe it,
+translate and voice it with the person's own ElevenLabs and Claude keys, and the browser drives them, builds the
+voice track and renders the videos.
+
+Coming from a setup that still runs the worker on a Mac: see [Upgrading from the worker setup](#upgrading-from-the-worker-setup).
 
 ## 1. Supabase
 1. Create a project at supabase.com (the free plan is enough).
@@ -56,6 +57,7 @@ in Vercel (Settings -> Environment Variables, never with `NEXT_PUBLIC_`). Keep i
 secret. If you change it, every saved key stops working and everyone has to save theirs again.
 
 ## 3. Run the site
+Locally you need Node.js 20.9 or later and pnpm 10 (`corepack enable` sets it up from `web/package.json`).
 ```
 cd web
 cp .env.example .env.local     # fill in the values from steps 1, 2 and 2b
@@ -71,7 +73,7 @@ its tries.
 
 ## 4. Preparing a video (the job page)
 A new video is prepared in the person's browser and short routes of the web app
-(`app/api/jobs/<id>/prepare/...`, [web/lib/prepare](../web/lib/prepare)), as `vt.py prepare` did on the worker.
+(`app/api/jobs/<id>/prepare/...`, [web/lib/prepare](../web/lib/prepare)).
 **Browsers:** desktop Chrome and Edge (Windows or Mac). Other browsers are told so when they pick a video; phones
 and tablets are told it works best on a computer.
 
@@ -89,23 +91,21 @@ and tablets are told it works best on a computer.
    the browser (`lib/prepare/local.ts`, decoded with WebCodecs):
    - its length and frame rate as ffprobe reports them, and the size it's shown at (`probe.ts`, `timing.ts`);
    - the loudness of its sound, as `ffmpeg -af ebur128` measures it (`LoudnessMeter`);
-   - the voiceover for speech-to-text, as vt.py's `base_vo.m4a`: mono (stereo mixed down as ffmpeg does), AAC
-     128 kb/s in MP4, or WAV in a browser without an AAC encoder;
+   - the voiceover for speech-to-text, as `ffmpeg -vn -ac 1 -c:a aac -b:a 128k` makes it: mono (stereo mixed down
+     as ffmpeg does), AAC 128 kb/s in MP4, or WAV in a browser without an AAC encoder;
    - the cuts: ffmpeg's scene score ported (below), in a few Web Workers. On a recent Mac in Chrome, two minutes
      of 1080p take about 7 seconds, two minutes of 4K about 20 (`pnpm e2e --bench`), while the upload runs.
    If the tab doesn't have the file any more (closed and opened again), it reads the upload back from R2.
 3. **The routes**, each one paid call at most, each saving its result in R2 before answering (`prep/` below):
    `media` (signed upload links for the voiceover and `prep/media.json`, then checks what arrived), `transcribe`
-   (ElevenLabs speech-to-text, `scribe_v2`, word timestamps, as `vt.transcribe`; the route reads the voiceover
-   from R2, it's never sent through the app), `names` (Claude checks the spelling of names, with the project's
-   "Names in the video" as the reference, as `vt.fix_names`), `align` (ElevenLabs forced alignment of the checked
-   transcript, then the analysis: `analysis.json`, below). Then the transcript is ready for review
-   (`save_prepared`). Unlike vt.py, the names are checked before the alignment, so a name fix costs no second
-   alignment; the analysis is the same.
-4. **An edited transcript** is timed again when it's approved (`aligning`, the `align` route again, as the worker's
-   align did): if the edits made the transcript stop matching the voiceover (`vt.cmd_analyze` warns where it
-   didn't before), the project goes back to the review with the reason (`save_aligned`); otherwise the job page
-   starts translating.
+   (ElevenLabs speech-to-text, `scribe_v2`, word timestamps; the route reads the voiceover from R2, it's never
+   sent through the app), `names` (Claude checks the spelling of names, with the project's "Names in the video" as
+   the reference), `align` (ElevenLabs forced alignment of the checked transcript, then the analysis:
+   `analysis.json`, below). Then the transcript is ready for review (`save_prepared`). The names are checked
+   before the alignment, so a name fix costs no second alignment.
+4. **An edited transcript** is timed again when it's approved (`aligning`, the `align` route again): if the edits
+   made the transcript stop matching the voiceover (the analysis warns where it didn't before), the project goes
+   back to the review with the reason (`save_aligned`); otherwise the job page starts translating.
 
 As for translating: the page keeps the screen awake and asks before the tab closes; a closed tab carries on from
 what's saved, nothing is paid twice; one browser prepares a project at a time (`hold_prepare`, `jobs.runner`,
@@ -113,14 +113,14 @@ renewed every 20 s; the routes answer only the holder; another device takes over
 passing problems are tried again with growing pauses, and a problem the person has to fix (a key, no credits, no
 speech in the video) fails the project with the reason (`fail_prepare`); **Try again** (`retry_job`) carries on
 from what was made. What each call cost goes to `usage_events`: `elevenlabs_stt` and `elevenlabs_alignment` with
-the video's `seconds` (as the worker recorded them), `claude` with tokens.
+the video's `seconds`, `claude` with tokens.
 
 ## 5. Translating and voicing (the job page)
 Once a transcript is approved, the job page makes every language itself, with the person's own keys, through
-short routes of the web app (`app/api/jobs/<id>/produce/<lang>/...`, [web/lib/produce](../web/lib/produce)),
-as `vt.py produce` does: Claude translates (and is asked again when markers got lost), ElevenLabs voices each
-beat, the timing plan is made from the recorded beats, and Claude rewrites the beats that don't fit (up to 3
-rounds). Then the language is `voiced`, and the page builds its voice track and renders it as before.
+short routes of the web app (`app/api/jobs/<id>/produce/<lang>/...`, [web/lib/produce](../web/lib/produce)):
+Claude translates (and is asked again when markers got lost), ElevenLabs voices each beat, the timing plan is
+made from the recorded beats, and Claude rewrites the beats that don't fit (up to 3 rounds). Then the language is
+`voiced`, and the page builds its voice track and renders it.
 - **The tab has to stay open** while a language is made (a few minutes): the page keeps the screen awake and asks
   before closing. If it's closed anyway, nothing is lost: every step is saved in R2, and the next time the page
   is opened it carries on from the first missing piece. Beats already voiced, and the translation, are reused,
@@ -152,70 +152,104 @@ rounds). Then the language is `voiced`, and the page builds its voice track and 
 - The analysis, like every file, is deleted from R2 after 30 days: after that a project can't get new
   languages; upload the video again as a new project.
 
-## Upgrading an existing setup to per-person keys
-Do it in this order. Vercel only applies new settings to new deployments, and a new worker against an old
-database fails every job.
-1. Set `SECRETS_KEY` in Vercel (Settings -> Environment Variables).
-2. Run the new migration (`supabase/migrations/20261122000000_user_keys.sql`).
-3. Merge and deploy, or redeploy if the code is already there. Then remove `ANTHROPIC_API_KEY` from Vercel.
-4. On the Mac, straight away: `git pull`, put the same `SECRETS_KEY` in `worker/.env`, remove the ElevenLabs
-   and Claude keys from it, and restart the worker (`worker/install-service.sh`, or Ctrl-C and start it again).
-   Until it restarts, the old worker still has your keys in memory and every job is billed to you.
-5. Everyone, you included, opens Settings and saves their keys and voice.
+## Upgrading from the worker setup
+This is the path from `main` as it was with the worker on a Mac (migrations up to `20261122000000_user_keys.sql`,
+per-person keys already working) to the web app alone: the five pull requests of the browser pipeline, #2 to #6,
+and their five migrations. Only steps 6 and 7 are the cut-over. Between them the site still runs the old code on
+the new database: pages open, but nothing new starts (no worker); projects are picked up after step 7. That window
+is the migrations plus one Vercel build, a few minutes. Pick a quiet moment and tell the others not to use the site
+then.
 
-## Upgrading an existing setup to browser rendering
-1. Run the migration `supabase/migrations/20261123000000_browser_render.sql`.
-2. Update the R2 CORS policy (step 2 above: `range` and the exposed headers).
-3. Deploy the web app.
-4. On the Mac: `git pull` and restart the worker. A worker from before this keeps working against the new
-   database (it renders and uploads the full video as before), but a new worker needs the new database.
+Why this way: the old code needs the worker and the old database; the new code needs the new database. Deploying
+the five pull requests one at a time, each with its migration, would mean keeping (and updating) the worker
+through four in-between versions. And merging them into `main` one after another would deploy five times, the
+first four against a database that has moved on. So everything is merged into one branch first (no deploy), the
+database is migrated, and `main` gets it all in one merge: one deploy.
 
-Projects made before keep their videos: they still play and download as before.
+**Before** (nothing here changes the live site, except that once the worker is stopped, new videos wait for
+step 7):
 
-## Upgrading to building the plan and the voice in the browser
-Do it in this order, one step straight after the other:
-1. Run the migration `supabase/migrations/20261124000000_browser_plan.sql`.
-2. Deploy the web app. Until it's deployed, the old pages can't save previews (`save_preview` now needs the
-   run number): a "Make preview" in that gap fails with a message, and works again after the deploy.
-3. On the Mac: `git pull` and restart the worker. An older worker keeps working against the new database (it
-   uploads `plan.json` and `voice.wav` itself, and the language is `ready` as before), but a new worker needs
-   the new database: started before the migration, every language fails.
+1. **Stop the worker for good.** Wait until no project is "Transcribing", "Translating" or "Rendering", then on
+   the Mac, in the repository (still on `main`): `worker/install-service.sh remove` (or Ctrl-C if it runs in a
+   terminal). Do this before pulling anything newer: #6 deletes that script, and launchd would keep restarting a
+   worker that isn't there. *Check:* `launchctl list | grep videotranslator` prints nothing. (Already pulled? By
+   hand: `launchctl bootout gui/$(id -u)/com.videotranslator.worker` and
+   `rm ~/Library/LaunchAgents/com.videotranslator.worker.plist`.) Keep `worker/.env` until the end: it's what you'd
+   need to start the worker again (rolling back, below).
+2. **R2 CORS:** replace the bucket's CORS policy with the one in step 2 above (it adds the `range` header and the
+   exposed headers the browser needs to read the video in pieces; the old site doesn't mind them).
+3. **Vercel:** make sure Fluid compute is on (Settings -> Functions; step 3 above). `SECRETS_KEY` stays as it is.
+4. **Merge the stack into one branch, top down.** On GitHub, merge #6, then #5, #4 and #3, each into its own base
+   branch (as they are: #6 into `browser-pipeline/4-analysis`, and so on), with "Create a merge commit". None of
+   these touches `main`, so nothing is deployed. Now #2 (`browser-pipeline/1-render` -> `main`) holds the whole
+   stack. Don't change any base to `main`. *Check:* the "Files changed" of #2 deletes `worker/` and adds all five
+   migrations, and its Vercel preview build (Vercel builds every branch push by default) is "Ready": that's the
+   code `main` will get.
+5. **Back up the database** (the only way back to the worker after the next step): on a paid plan, Database ->
+   Backups has last night's; otherwise, with the connection string from the dashboard's **Connect** (session
+   pooler) and `pg_dump` 17 (`brew install postgresql@17`):
+   `pg_dump "<connection string>" --schema=public --format=custom --file=before-web-only.dump`.
 
-Nothing changes in R2's CORS policy. Languages already `ready` keep their files and render as before.
+**Cut-over:**
 
-## Upgrading to translating and voicing in the web app
-The worker (version 4) no longer translates; the job page does, through the web app. Do it in this order:
-1. Let the worker finish what it's doing (no project "Transcribing" or "Translating"), then stop it
-   (`worker/install-service.sh remove`, or Ctrl-C).
-2. Run the migration `supabase/migrations/20261125000000_browser_produce.sql`.
-3. Deploy the web app (with Fluid compute on, step 3 above).
-4. On the Mac: `git pull` and start the worker again (`worker/install-service.sh`).
+6. **Database:** in the Supabase SQL Editor, run these five files in this order, each pasted in full (one run
+   each; the editor runs a file as one transaction, so a file that fails leaves nothing of itself behind):
+   1. `supabase/migrations/20261123000000_browser_render.sql`
+   2. `supabase/migrations/20261124000000_browser_plan.sql`
+   3. `supabase/migrations/20261125000000_browser_produce.sql`
+   4. `supabase/migrations/20261126000000_browser_prepare.sql`
+   5. `supabase/migrations/20261127000000_remove_worker.sql`
 
-In between nothing breaks: projects wait. A version 3 worker against the new database gets no work at all (it
-would translate approved projects without the analysis the web app needs). Projects that were waiting for the
-old worker to translate them (approved, or stopped half way) go to the new worker first, which times their
-transcript and uploads `analysis.json`; then the job page translates them (languages already voiced keep their
-voice). Projects that were already done keep everything; translating them into more languages also goes through
-the worker once, for the same reason (until the next upgrade, below: the browser makes `analysis.json` itself). A version 3 worker that was still preparing a
-project when the database was upgraded leaves it without `analysis_key`; approving it then goes through the new
-worker too. Nothing changes in R2's CORS policy, and no new setting is needed.
+   *Check:* this says which ones are in; after all five, every column is `true`:
+   ```sql
+   select
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'job_outputs' and column_name = 'plan_key')   as "1_render",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'job_outputs' and column_name = 'generation') as "2_plan",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'jobs' and column_name = 'analysis_key')      as "3_produce",
+     exists (select from information_schema.columns
+              where table_schema = 'public' and table_name = 'jobs' and column_name = 'runner')            as "4_prepare",
+     to_regclass('public.workers') is null                                                                 as "5_remove_worker";
+   ```
+   If a file fails: stop there, don't run the next ones. The query shows where it stopped; fix what the error says
+   and run that same file again. (A file that already ran fails if run again, e.g. "already exists": harmless.)
+7. **Deploy:** merge #2 into `main` ("Create a merge commit"). Vercel deploys it. *Check:* in Vercel ->
+   Deployments, the production deployment of that merge is "Ready"; then open the site: the header no longer
+   says "Render Mac offline", the project list loads, an older project shows its videos, and a new short video
+   goes through to its transcript.
 
-## Upgrading to preparing videos in the browser
-The web app now prepares every video itself; the worker isn't needed. Do it in this order:
-1. Let the worker finish what it's doing (no project "Transcribing" or "Getting ready"), then stop it for good:
-   `worker/install-service.sh remove` on the Mac (or Ctrl-C). `git pull` there is optional: the new `worker.py` only
-   says it's retired and then does nothing.
-2. Run the migration `supabase/migrations/20261126000000_browser_prepare.sql`.
-3. Deploy the web app (Fluid compute on, step 3 above).
-4. Optional: remove `worker/.env` from the Mac, and the Supabase secret key from anywhere it was kept.
+**After:**
 
-The migration drops the worker's database functions, so a worker left running only logs errors and does nothing.
-Projects that were waiting for the worker go to the job page: a video waiting to be transcribed (`queued`, or
-`preparing` on the worker) is prepared the next time its page is opened; an approved transcript (`approved`,
-`aligning`) is timed there. A project the old worker prepared is timed with its own `analysis.json` (the length,
-frame rate, size, cuts and loudness vt.py measured); only its voiceover is read again, from the uploaded video, so
-that works while the video is still in R2 (30 days). Nothing changes in R2's CORS policy, and no new setting is
-needed.
+8. **Clean up the Mac and the keys:** delete `worker/.env` from the Mac (or the whole checkout), and the Supabase
+   secret (service role) key from anywhere it was kept; nothing uses it any more. Delete or roll it in Supabase
+   (Project Settings -> API Keys) to be sure: since #6 it can't read the tables anyway. If you used the Claude
+   Code plugin (`video-translator`, from this repository's marketplace), it's gone too: in Claude Code,
+   `/plugin uninstall video-translator@video-translator` and `/plugin marketplace remove video-translator`.
+
+**If something goes wrong:**
+- Before step 6 everything can go back as it was: start the worker again on the Mac from `main`
+  (`worker/install-service.sh`) and close or leave the merged branches (nothing reached `main`).
+- A migration fails (step 6): see above; the site stays on the old code meanwhile.
+- The deploy fails (step 7): Vercel keeps serving the old site; fix the build and push to `main` again. Don't use
+  Vercel's Instant Rollback to a deployment from before the cut-over: that code needs the worker and the old
+  database, and neither is there any more.
+- Back to the worker after step 6: restore the backup of step 5
+  (`pg_restore --clean --if-exists --dbname "<connection string>" before-web-only.dump`, or the dashboard's
+  restore), revert the merge of #2 on `main`, and start the worker again. Projects made in between are lost.
+
+What happens to projects that were in the middle of something: a video waiting to be transcribed is prepared the
+next time its page is opened; an approved transcript is timed there; a language the worker was translating is
+made by the job page, reusing what the worker voiced. A project the worker prepared is timed with its own
+`analysis.json`; only its voiceover is read again from the uploaded video, so that works while the video is
+still in R2 (30 days). Videos the worker rendered still play and download until R2 deletes them.
+
+**30 days later** (after 2026-12-23, if this was deployed on 2026-11-23): no project from the worker is left in
+R2, and the code and columns kept for them can go in a new change: `job_outputs.output_key` and `output_bytes`,
+the `done` status of an output, the full-size download of `GET /api/jobs/<id>/files/<lang>`, and the
+`from: "analysis"` path of `mediaStep` (`lib/prepare/steps.ts`, `Media.from`). Each is marked "remove after
+2026-12-23".
 
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the project's page uploads the video straight to
@@ -256,7 +290,7 @@ of an older run, or a browser tab still busy with one, can never mix with the ne
 | `prep/names.json` | prepare route (names) | the transcript after Claude's name check: `script`, `names_fixed`, `base_lang` |
 | `prep/alignment.json` | prepare route (align) | ElevenLabs' forced alignment, plus `_text`: the transcript it was for |
 | `prep/align-check.json` | prepare route (align) | while an edited transcript is timed: whether the analysis before had warnings |
-| `analysis.json` | prepare route (align); older workers | the original video and voiceover as analyzed (below); what every language is made from |
+| `analysis.json` | prepare route (align); the old worker | the original video and voiceover as analyzed (below); what every language is made from |
 | `work/<lang>/script.json` | produce route (translate) | the translation (below), across runs: a new run starts from it |
 | `work/<lang>/ask.json` | produce route (translate) | while Claude is asked again: the conversation so far; removed when done |
 | `work/<lang>/tts/<clip>.mp3`, `.json` | produce route (tts) | every beat ever voiced for this language: a run copies from here instead of paying again |
@@ -266,8 +300,8 @@ of an older run, or a browser tab still busy with one, can never mix with the ne
 | `out/<lang>/g<n>/plan.json` | browser | how to cut and retime the source for this language |
 | `out/<lang>/g<n>/voice.wav` | browser | the finished voice track |
 | `out/<lang>/g<n>/preview.mp4` | browser | the 720p preview (H.264 + AAC) |
-| `out/<lang>/plan.json`, `voice.wav`, `preview.mp4` | phase 1 workers and pages | the same, from before runs had folders |
-| `out/<lang>.mp4`, `out/<lang>_preview.mp4` | older workers | rendered videos of projects made before browser rendering |
+| `out/<lang>/plan.json`, `voice.wav`, `preview.mp4` | the old worker | the same, from before runs had folders |
+| `out/<lang>.mp4`, `out/<lang>_preview.mp4` | the old worker | rendered videos of projects made before browser rendering |
 
 The database rows (`jobs`, `job_outputs`) hold the keys; the app and the database build them from the rows
 (`save_prepared`, `save_aligned`, `mark_voiced`, `save_plan`, `save_preview`,
@@ -275,24 +309,24 @@ The database rows (`jobs`, `job_outputs`) hold the keys; the app and the databas
 never from what a browser sends.
 
 ### Measurements (prep/media.json, format 1)
-What `vt.cmd_analyze` took from ffprobe and ffmpeg, measured in the browser
+What the analysis takes from the video itself, measured in the browser
 ([web/lib/prepare/media.ts](../web/lib/prepare/media.ts) checks it on the server): `format` (1), `dur` (ffprobe's
 format duration, whole microseconds), `fps` (`r_frame_rate` as a float), `width`, `height` (shown size, rotation
-applied), `base_lufs` (as `vt.lufs`: one decimal), `cuts` (as `vt.detect_cuts`: seconds on the frame grid,
-sorted, not within 0.05 s of either end), `audio` (`audio.m4a` or `audio.wav`), `audio_bytes`, `from` (`browser`,
-or `analysis` when it was taken from an older worker's `analysis.json`), and for information `frames` and
-`variable_fps`.
+applied), `base_lufs` (ffmpeg's `ebur128` integrated loudness, one decimal as it prints it), `cuts` (seconds on
+the frame grid, sorted, not within 0.05 s of either end), `audio` (`audio.m4a` or `audio.wav`), `audio_bytes`,
+`from` (`browser`, or `analysis` when it was taken from the old worker's `analysis.json`), and for information
+`frames` and `variable_fps`.
 
 ### Scene cut parity
-The cuts are vt.py's: `ffmpeg -vf "scale=270:-2,select='gt(scene,0.2)'"`, ported from ffmpeg 9 itself
-([web/lib/prepare/scenes.ts](../web/lib/prepare/scenes.ts)). Each frame's luma plane, as the browser's decoder gives
-it (H.264 and HEVC decoding is exact, so these are ffmpeg's pictures), is rotated as ffmpeg's autorotate does,
-scaled to 270 pixels wide with swscale's default bicubic filter in its own fixed-point arithmetic (filter
-coefficients from `initFilter`, the 15-bit horizontal pass and the rounded vertical one), and scored as
-`get_scene_score` does: min(MAFD, |MAFD - previous MAFD|) / 100 in single precision, MAFD being the mean absolute
-difference from the previous picture. On the test videos every scaled picture is ffmpeg's to the bit, every score
-is ffmpeg's to its 6 printed decimals, and the cuts are `vt.detect_cuts`' exactly, borderline ones included (a
-still picture brightened by 19, 20, 21 and 30 levels, fades, 24/25/29.97/30/60 fps, several time bases, rotated
+The cuts are ffmpeg's `-vf "scale=270:-2,select='gt(scene,0.2)'"`, ported from ffmpeg 9 itself
+([web/lib/prepare/scenes.ts](../web/lib/prepare/scenes.ts)), each cut's time snapped to the frame grid. Each frame's
+luma plane, as the browser's decoder gives it (H.264 and HEVC decoding is exact, so these are ffmpeg's pictures),
+is rotated as ffmpeg's autorotate does, scaled to 270 pixels wide with swscale's default bicubic filter in its own
+fixed-point arithmetic (filter coefficients from `initFilter`, the 15-bit horizontal pass and the rounded vertical
+one), and scored as `get_scene_score` does: min(MAFD, |MAFD - previous MAFD|) / 100 in single precision, MAFD being
+the mean absolute difference from the previous picture. On the test videos every scaled picture is ffmpeg's to the
+bit, every score is ffmpeg's to its 6 printed decimals, and the cuts are ffmpeg's exactly, borderline ones included
+(a still picture brightened by 19, 20, 21 and 30 levels, fades, 24/25/29.97/30/60 fps, several time bases, rotated
 videos). Where it can differ: ffmpeg's filter alignment depends on its build (the port uses that of the x86 and
 arm64 builds people run; a plain C build drops a few tiny coefficients), and x86's vertical pass without
 `accurate_rnd` rounds a little differently (a pixel by up to 2 levels, a score by far less than 0.001): only a
@@ -302,74 +336,76 @@ not exact. The frame rate of a video whose rate really varies is ffprobe's guess
 every frame, where ffprobe looks at the first ones.
 
 ### Analysis (format 1)
-`analysis.json` is `vt.portable_analysis`, written by the align route
-([web/lib/prepare/analyze.ts](../web/lib/prepare/analyze.ts), a port of `vt.cmd_analyze`;
-[web/lib/produce/analysis.ts](../web/lib/produce/analysis.ts) reads it and refuses other formats): `format` (1), `base_lang`, `video`, `source`, `speech_start`, `speech_end`,
-`base_lufs`, `tokens` and `anchors` as in the plan inputs below, `beats` (`id`, `text`, `marked`: the text with a
-`{n}` marker in front of the word each cut lands on, `dur`, `pause_after`) and `warnings`. `jobs.analysis_script`
-is the transcript it was made from: `approve_job` sends a different (edited) transcript to be timed again first
+`analysis.json` is written by the align route ([web/lib/prepare/analyze.ts](../web/lib/prepare/analyze.ts);
+[web/lib/produce/analysis.ts](../web/lib/produce/analysis.ts) reads it and refuses other formats), in the format
+the old worker wrote: `format` (1), `base_lang`, `video`, `source`, `speech_start`, `speech_end`, `base_lufs`,
+`tokens` and `anchors` as in the plan inputs below, `beats` (`id`, `text`, `marked`: the text with a `{n}` marker
+in front of the word each cut lands on, `dur`, `pause_after`) and `warnings`. `jobs.analysis_script` is the
+transcript it was made from: `approve_job` sends a different (edited) transcript to be timed again first
 (`aligning`).
 
 ### The translation
-`work/<lang>/script.json` is what `vt.write_lang_script` writes (`lang`, `beats`: `id`, `text` with the markers,
-`speed` only where Claude set one, within 0.7-1.2 and rounded to 2 decimals), plus `format` (1), `base` (which
-analysis it translates: a hash of its marked beats; another one means a new translation), and `generation` and
-`round` (the run it was last used in, and how many times Claude rewrote it in that run). The prompts, the schema,
-the model and the checks are `vt.py`'s (`TRANSLATE_SYSTEM`, `SCRIPT_SCHEMA`, `check_script`, `refit_lang`).
-Each clip's name is `vt.tts_beat`'s cache key (12 hex digits of the SHA-1 of the voice, the format and the
-request body as Python's `json.dumps` writes them), so the same request always gives the same file.
+`work/<lang>/script.json` has `lang` and `beats` (`id`, `text` with the markers, `speed` only where Claude set
+one, within 0.7-1.2 and rounded to 2 decimals), plus `format` (1), `base` (which analysis it translates: a hash
+of its marked beats; another one means a new translation), and `generation` and `round` (the run it was last
+used in, and how many times Claude rewrote it in that run). The prompts, the schema, the model and the checks
+are in [web/lib/produce/translate.ts](../web/lib/produce/translate.ts) (`TRANSLATE_SYSTEM`, `SCRIPT_SCHEMA`,
+`checkScript`, `refitPrompt`). Each clip's name is its cache key (12 hex digits of the SHA-1 of the voice, the
+format and the request body as Python's `json.dumps` writes them, as the old worker named them), so the same
+request always gives the same file.
 
 ### Plan inputs (format 1)
-`inputs.json` is `vt.plan_inputs`, written by the fit route ([web/lib/produce/steps.ts](../web/lib/produce/steps.ts))
+`inputs.json` is written by the fit route ([web/lib/produce/steps.ts](../web/lib/produce/steps.ts))
 ([web/lib/pipeline/inputs.ts](../web/lib/pipeline/inputs.ts) reads it and refuses other formats; a change older
-inputs can't satisfy raises `format` in both):
+inputs can't satisfy raises `format`):
 - `format` (1), `lang`, `voice_id` (the ElevenLabs voice the clips were made with)
-- `analysis`: the original video and voiceover, from `vt analyze`: `video` (`dur` seconds, `fps` = ffprobe's
+- `analysis`: the original video and voiceover, from the analysis: `video` (`dur` seconds, `fps` = ffprobe's
   `r_frame_rate` as a float), `source` (`width`, `height`: the size ffmpeg shows the video at, rotation
   applied), `speech_start`, `speech_end` (seconds), `base_lufs` (integrated loudness of the original, one
-  decimal as `vt.lufs` reads it), `beats` (`id`, `dur`, `pause_after`), `tokens` (per word of the script: `beat`,
-  its beat's index), `anchors` (every cut: `id`, `t`, `kind` `lead`/`tail`/`in`/`gap`, and `frac`, `off` or
-  `token` as `vt analyze` writes them)
-- `fit`: the fitting limits the plan is built with (`config.default.toml` [fit] unless a config overrode them)
+  decimal as ffmpeg's `ebur128` prints it), `beats` (`id`, `dur`, `pause_after`), `tokens` (per word of the
+  script: `beat`, its beat's index), `anchors` (every cut: `id`, `t`, `kind` `lead`/`tail`/`in`/`gap`, and
+  `frac`, `off` or `token`)
+- `fit`: the fitting limits the plan is built with (`FIT` in [web/lib/pipeline/config.ts](../web/lib/pipeline/config.ts))
 - `script`: the translation, per beat `id`, `text` (with the `{n}` cut markers) and optional `speed`
 - `clips`: per beat, in beat order, `beat` (its id), `file` (the clip's name in `tts/`, letters, digits, `-`,
   `_` and `.mp3` only) and `speed` (the TTS speed it was voiced at)
 
-Each `tts/<clip>.json` is what `vt.tts_beat` keeps: `text` (what was voiced, markers removed), `speed`, and
-`alignment` from ElevenLabs' `with-timestamps` endpoint (`characters`, `character_start_times_seconds`,
-`character_end_times_seconds`; `normalized_alignment` is kept but unused). A clip's length is its decoded
-samples (MP3 encoder delay and padding removed, as ffmpeg does) in whole microseconds, as ffprobe reports it.
-The browser reads the delay and padding from the clip's LAME header itself
-([web/lib/pipeline/mp3.ts](../web/lib/pipeline/mp3.ts)), so a decoder that doesn't cut them gives the same
-samples as Chrome's and ffmpeg's. The fit route reads the same length from the header without decoding
-(`mp3Samples`); a clip without that header (ElevenLabs' have one) is counted frame by frame instead.
+Each `tts/<clip>.json` has `text` (what was voiced, markers removed), `speed`, and `alignment` from ElevenLabs'
+`with-timestamps` endpoint (`characters`, `character_start_times_seconds`, `character_end_times_seconds`;
+`normalized_alignment` is kept but unused). A clip's length is its decoded samples (MP3 encoder delay and padding
+removed, as ffmpeg does) in whole microseconds, as ffprobe reports it. The browser reads the delay and padding
+from the clip's LAME header itself ([web/lib/pipeline/mp3.ts](../web/lib/pipeline/mp3.ts)), so a decoder that
+doesn't cut them gives the same samples as Chrome's and ffmpeg's. The fit route reads the same length from the
+header without decoding (`mp3Samples`); a clip without that header (ElevenLabs' have one) is counted frame by
+frame instead.
 
-`plan.json` is `scripts/vt.py`'s plan (`build_plan`) as `vt.portable_plan` writes it, with `"format": 1`
-([web/lib/render/plan.ts](../web/lib/render/plan.ts) refuses other formats). The browser uses `fps` (the
+`plan.json` ([web/lib/pipeline/plan.ts](../web/lib/pipeline/plan.ts), `"format": 1`;
+[web/lib/render/plan.ts](../web/lib/render/plan.ts) refuses other formats). The browser uses `fps` (the
 source's frame rate; the output has the same), `total_frames`, and per clip in `segments`: `src_start` and
 `src_len` (seconds of the source), `speed` and `frames` (exactly how many output frames). Each clip is retimed
-exactly as `vt.segment_cmd`'s ffmpeg command would (see [web/lib/render/frames.ts](../web/lib/render/frames.ts)),
-the last frame held for as long as the clip needs when it runs past the end of the footage. `source`
-(`width`, `height`) is the size ffmpeg shows the source at (rotation applied, `vt.video_size`): the browser
-renders at that size, like the CLI, and stops with a message if it reads the rotation the other way. `voice`
-(`file`, `sample_rate`, `channels`) describes `voice.wav`, which must match it and be as long as the video.
-`beats`, `anchors` and `flags` are there for information.
+exactly as ffmpeg's `-ss <src_start> -t <src_len + 0.1> -vf "setpts=(PTS-STARTPTS)/<speed>,fps=<fps>,scale,tpad"
+-frames:v <frames>` would (see [web/lib/render/frames.ts](../web/lib/render/frames.ts)), the last frame held for
+as long as the clip needs when it runs past the end of the footage. `source` (`width`, `height`) is the size
+ffmpeg shows the source at (rotation applied): the browser renders at that size, and stops with a message if it
+reads the rotation the other way. `voice` (`file`, `sample_rate`, `channels`) describes `voice.wav`, which must
+match it and be as long as the video. `beats`, `anchors` and `flags` are there for information.
 
-`voice.wav` is what `vt.build_voice_track` makes: 16-bit PCM, 44.1 kHz, stereo, loudness matched to the
-original voiceover and limited, exactly as long as `vt.py`'s (`total_frames / fps`, cut like `-t` with four
-decimals). These are the samples the AAC encoder gets, in the browser and in the CLI render alike.
+`voice.wav` is 16-bit PCM, 44.1 kHz, stereo, loudness matched to the original voiceover and limited, exactly
+`total_frames / fps` long (cut like ffmpeg's `-t` with four decimals). These are the samples the AAC encoder gets.
 
 The database row for each language (`job_outputs`) has `generation`; `status` `pending` (asked for), `running`
 (a run of the job page), `voiced` with `inputs_key`, then `ready` with `plan_key`, `voice_key`, `seconds`,
 `flags` and `report`, and once the browser made the preview, `preview_key` and `preview_bytes`; or `failed`
-with the reason in `flags`.
+with the reason in `flags`. (`done` with `output_key` is a video the old worker rendered.)
 
 ### Voice track parity
-`scripts/vt.py` stays the reference until the Python pipeline is removed. The browser's plan is `vt.py`'s plan:
-integers (frames, ids) exactly, floats to the last bit or so, flags and report word for word. Its voice track:
+The timing plan is a port of the old Python pipeline's: integers (frames, ids) exactly, floats to the last bit or
+so, flags and report word for word, against its plans frozen in `web/test/fixtures/`. The voice track is checked
+against the one ffmpeg makes from the same plan (`atrim` at exact samples, `atempo`, `ebur128`, `volume`,
+`alimiter=limit=0.95:level=0`, `-ac 2`; `web/test/reference.mjs`):
 - every beat at tempo 1 (the usual case: the plan only changes the tempo where a cut can't be placed): sample for
   sample, within 2 of 32768 (Chrome's MP3 decoder and ffmpeg's differ in the last bit). The loudness meter is
-  ffmpeg `ebur128`'s integrated loudness to 0.002 LU, rounded to 0.1 LU as `vt.lufs` reads it, so the gain is the
+  ffmpeg `ebur128`'s integrated loudness to 0.002 LU, rounded to 0.1 LU as ffmpeg prints it, so the gain is the
   same.
 - a beat with another tempo: stretched with WSOLA ([web/lib/pipeline/wsola.ts](../web/lib/pipeline/wsola.ts))
   instead of ffmpeg's atempo, so not sample for sample: the same length to the sample (`round(length / tempo)`;
@@ -377,40 +413,40 @@ integers (frames, ids) exactly, floats to the last bit or so, flags and report w
   ~20 ms early), the same level within 0.5 dB, and as clean a tone as atempo's. atempo keeps about 0.1-0.2 dB
   more energy in a stretched beat than WSOLA, so the loudness measured before the gain can round to another
   0.1 LU step: then the whole track is 0.1 dB (with most of it stretched, up to 0.2 dB) louder or quieter than
-  `vt.py`'s.
-- the limiter (`alimiter=limit=0.95` in `vt.py`, [web/lib/pipeline/limiter.ts](../web/lib/pipeline/limiter.ts)
-  here): the same 219-sample delay, untouched audio identical; where it acts, within 0.3% (relative error) of
-  alimiter's output, never above the limit.
-- `vt.py` itself changed with this: it decodes each clip whole and trims it at exact samples (an MP3 seek
-  garbled the first ~25 ms of every beat), and leaves a tempo of exactly 1 alone (atempo still re-cut it).
+  ffmpeg's.
+- the limiter ([web/lib/pipeline/limiter.ts](../web/lib/pipeline/limiter.ts)): the same 219-sample delay as
+  `alimiter`, untouched audio identical; where it acts, within 0.3% (relative error) of alimiter's output, never
+  above the limit.
 
 ## Tests
-In `web/`: `pnpm test` runs the unit tests, including a check of the browser's frame selection against ffmpeg
-running `vt.segment_cmd`, the timing plan and voice track against `vt.py` on 33 synthetic jobs, one-beat
-scripts and videos without cuts among them (`test/pipeline-parity.test.ts`, made by `test/pipeline_fixture.py`),
-the loudness meter, time stretch and limiter against ffmpeg (`test/voice-dsp.test.ts`), and the MP3 delay and
-padding cut against ffmpeg's (`test/mp3.test.ts`); these need ffmpeg (and uv) and are skipped without them.
-`test/produce-parity.test.ts` runs `vt.produce` and the produce steps against the same fake Claude and
-ElevenLabs (`test/mocks.mjs`: deterministic, so the same request gets the same answer) and checks they send the
-same requests (every Claude request body in order, the same ElevenLabs bodies) and end with the same translation,
-clip names and bytes, and plan inputs; it covers Claude asking again, rewrite rounds (one language uses all
-three), a translation that never gets its markers right, stopping and carrying on without paying twice, a
-second run that pays nothing, the retries with their pauses, and the message for each key problem; single
-functions (`check_script`, the cache key, Python's `json.dumps`, the prompts) are compared with `vt.py`'s own
-answers. `test/prepare-parity.test.ts` does the same for the prepare half: `vt.prepare` (as the worker ran it) and
-the prepare steps on test videos (`test/videos.mjs`, made with ffmpeg: cuts, near-threshold brightness steps, fades,
-24 to 60 fps at several time bases, rotated) against fake speech-to-text, forced alignment and name checks, with
-the same requests and the same `analysis.json`, transcript, names and warnings; an edited transcript timed again as
-the worker's align (a spelling fix passes, changed words go back to review); asking again pays nothing.
-`test/scenes.test.ts` checks every scaled picture, every scene score and the cuts against ffmpeg and
-`vt.detect_cuts`; `test/probe.test.ts` the length, frame rate, size, HDR and loudness against ffprobe and
-`vt.lufs`, and the file checks' decisions. `pnpm e2e` builds two fake jobs' plans and voice tracks from their plan inputs in headless Google
-Chrome, compares them with `vt.py`'s, renders one and compares every frame and the voice with the CLI render
-(`--size 2160x3840` for 4K, `--rate 30000/1001`); then it makes an approved job's language in Chrome with the
-job page's produce code through the produce steps (against the fakes), checks the requests and the plan inputs
-against `vt.produce`'s, builds and renders it and compares it with the CLI render. Last, a new video all the way in
-Chrome, without a worker: the file checks on every test video (HDR, variable frame rate, rotated, no sound, codecs
-Chrome can't decode, too short), what the browser measures of them against vt.py (length, frame rate, size, cuts,
-loudness) and its voiceover against ffmpeg's, then one is uploaded, prepared through the prepare steps
-(`analysis.json` as `vt.prepare`'s), edited and timed again (as the worker's align), produced, built and rendered,
-and compared with vt.py's CLI render of the same video. No test calls ElevenLabs or Claude.
+In `web/`, with `ffmpeg` and `ffprobe` 9.0 installed (no Python; another version runs with a warning, see
+"Tests" in [web/README.md](../web/README.md)): `pnpm test` runs the unit tests and the checks
+against ffmpeg and the frozen references (see "Tests" in [web/README.md](../web/README.md)), with fake Claude and
+ElevenLabs (`test/mocks.mjs`: deterministic, so the same request gets the same answer):
+- the browser's frame selection against ffmpeg's clip retiming command (`test/ffmpeg-frames.test.ts`);
+- the timing plan and voice track on 33 synthetic jobs, one-beat scripts and videos without cuts among them
+  (`test/pipeline-parity.test.ts`): plans as the old pipeline's, voice tracks as ffmpeg's;
+- the loudness meter, time stretch and limiter against ffmpeg (`test/voice-dsp.test.ts`), and the MP3 delay and
+  padding cut against ffmpeg's (`test/mp3.test.ts`);
+- the produce steps (`test/produce-parity.test.ts`): the same requests as the old pipeline's (every Claude request
+  body in order, the same ElevenLabs bodies) and the same translation, clip names, bytes and plan inputs; Claude
+  asking again, rewrite rounds (one language uses all three), a translation that never gets its markers right,
+  stopping and carrying on without paying twice, a second run that pays nothing, the retries with their pauses,
+  and the message for each key problem; single functions (`check_script`, the cache key, Python's `json.dumps`,
+  the prompts) against the old pipeline's answers;
+- the prepare steps (`test/prepare-parity.test.ts`) on test videos (`test/videos.mjs`, made with ffmpeg: cuts,
+  near-threshold brightness steps, fades, 24 to 60 fps at several time bases, rotated): the same requests,
+  `analysis.json`, transcript, names and warnings as the old pipeline's; an edited transcript timed again (a
+  spelling fix passes, changed words go back to review); asking again pays nothing;
+- every scaled picture, scene score and cut against ffmpeg (`test/scenes.test.ts`), and the length, frame rate,
+  size, HDR and loudness against ffprobe and `ebur128`, and the file checks' decisions (`test/probe.test.ts`).
+
+`pnpm e2e` (headless Google Chrome) builds two fake jobs' plans and voice tracks from their plan inputs, compares
+them with the frozen plans and ffmpeg's voice tracks, renders one and compares every frame and the voice with
+ffmpeg's render of the same plan; then it makes an approved job's language in Chrome with the job page's produce
+code through the produce steps, checks the requests and the plan inputs, builds and renders it. Last, a new video
+all the way: the file checks on every test video (HDR, variable frame rate, rotated, no sound, codecs Chrome
+can't decode, too short), what the browser measures of them against ffprobe and ffmpeg (length, frame rate,
+size, cuts, loudness, the voiceover), then one is uploaded, prepared through the prepare steps, edited and timed
+again, produced, built and rendered, each step compared with the frozen results and ffmpeg's render. No test
+calls ElevenLabs or Claude.

@@ -1,11 +1,11 @@
 // The produce half of a job, per language, as short steps the job page calls one after another through the
-// produce routes (app/api/jobs/<id>/produce/<lang>/...): scripts/vt.py's produce() loop up to the recorded voice,
+// produce routes (app/api/jobs/<id>/produce/<lang>/...): the old Python pipeline's produce() loop up to the recorded voice,
 //
 //   translate  -> work/<lang>/script.json             (vt.translate_lang; returns at once when there is one)
 //   tts (each beat) -> work/<lang>/tts/<clip>, copied into out/<lang>/g<n>/tts/   (vt.tts_beat, cached)
 //   fit        -> the timing plan from the clips: nothing flagged, or the last round -> out/<lang>/g<n>/inputs.json
 //                 and the language is voiced; otherwise ->
-//   translate (rewrite) -> Claude rewrites the flagged beats (vt.refit_lang), round + 1 -> tts -> fit ...
+//   translate (rewrite) -> Claude rewrites the flagged beats, round + 1 -> tts -> fit ...
 //
 // Each step does one paid call at most and saves what it made before it answers, so a step can always be asked
 // again (a dropped connection, a closed tab): it picks up from what's saved. Every step checks the run
@@ -68,7 +68,7 @@ export type LangScript = {
 /** work/<lang>/ask.json: a translation Claude got wrong, with what to ask next (vt.ask_until_valid's messages). */
 type Ask = { kind: "translate" | "rewrite"; generation: number; round: number; attempt: number; messages: Message[] };
 
-/** How many times Claude is asked for a translation without problems before the language fails (vt.ask_until_valid). */
+/** How many times Claude is asked for a translation without problems before the language fails. */
 export const TRIES = 3;
 
 const td = new TextDecoder();
@@ -128,7 +128,7 @@ export function beatClips(r: Run, beats: ScriptBeat[]): BeatClip[] {
   });
 }
 
-/** A clip's length in seconds as vt.py sees it (ffprobe), from the MP3's header: no decoding. */
+/** A clip's length in seconds as the old Python pipeline sees it (ffprobe), from the MP3's header: no decoding. */
 export function mp3Duration(mp3: Uint8Array): number {
   const n = mp3Samples(mp3);
   if (n === null) throw new ProduceError("a recorded beat isn't an MP3 file: try again", { retry: true });
@@ -174,9 +174,9 @@ export type TranslateResult =
   | { done: false; problems: string[]; attempt: number };
 
 /**
- * kind "translate": the language's translation (vt.translate_lang), or the saved one. kind "rewrite": Claude
- * rewrites the beats the plan of `round` flagged (vt.refit_lang) -> round + 1. One Claude call at most: when
- * the answer has problems (vt.check_script), they are saved with the conversation and the answer is
+ * kind "translate": the language's translation, or the saved one. kind "rewrite": Claude
+ * rewrites the beats the plan of `round` flagged -> round + 1. One Claude call at most: when
+ * the answer has problems, they are saved with the conversation and the answer is
  * {done: false}; ask again to give Claude the next try.
  */
 export async function translateStep(r: Run, claude: ClaudeClient, req: { kind: "translate" | "rewrite"; round?: number }): Promise<TranslateResult> {
@@ -238,7 +238,7 @@ export async function translateStep(r: Run, claude: ClaudeClient, req: { kind: "
 export type TtsResult = { beat: number; file: string; cached: boolean; duration: number };
 
 /**
- * Beat `beat` (index) of the translation at `round`, voiced (vt.tts_beat): already in this run's folder, or in
+ * Beat `beat` (index) of the translation at `round`, voiced: already in this run's folder, or in
  * the language's cache (an earlier run or round voiced the same request), or a new ElevenLabs call. Ends with
  * tts/<clip>.mp3 and tts/<clip>.json in the run's folder.
  */
@@ -278,7 +278,7 @@ export async function ttsStep(r: Run, eleven: { apiKey: string; fetchFn?: typeof
 export type FitResult = { voiced: boolean; round: number; flags: string[] };
 
 /**
- * The plan of the translation at `round` from its clips (vt.cmd_plan): with nothing flagged, or after the last
+ * The plan of the translation at `round` from its clips: with nothing flagged, or after the last
  * round of rewrites, the run's inputs.json is written (last, after every clip it names) and `markVoiced` marks the
  * language voiced. Otherwise {voiced: false}: the beats to rewrite are in the flags.
  */

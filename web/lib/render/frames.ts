@@ -1,5 +1,5 @@
-// Which source frame goes into each output frame of a clip. This reproduces what scripts/vt.py's ffmpeg
-// command does for one plan segment (vt.segment_cmd):
+// Which source frame goes into each output frame of a clip. This reproduces what the old Python pipeline's ffmpeg
+// command does for one plan segment:
 //
 //   ffmpeg -ss <src_start> -t <src_len + 0.1> -i source
 //          -vf setpts=(PTS-STARTPTS)/<speed>,fps=<fps>,scale=W:H,tpad=stop_mode=clone:stop=-1 -frames:v <frames>

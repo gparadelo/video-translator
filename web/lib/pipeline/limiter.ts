@@ -1,4 +1,4 @@
-// A look-ahead peak limiter standing in for ffmpeg's `alimiter=limit=0.95:level=0` (vt.voice_filter). It is
+// A look-ahead peak limiter standing in for ffmpeg's `alimiter=limit=0.95:level=0`. It is
 // written here from its behaviour, not ported, and matches it where it matters:
 //   * the output is the input delayed by the look-ahead (5 ms: 219 samples at 44.1 kHz; alimiter has no latency
 //     compensation either), and exactly that whenever no peak is above the limit;
@@ -6,8 +6,8 @@
 //   * after a peak the gain comes back up linearly over the release time (50 ms from that peak's gain to 1);
 //   * the output is clipped to +-limit, like alimiter's last step.
 // Deviations: when a second peak arrives while the gain is already down, alimiter ramps from where its gain is,
-// this ramps as if from unity (it can start reducing a few samples earlier); alimiter's auto-release (off in
-// vt.py) isn't implemented. The tests compare it with ffmpeg on signals that trigger it.
+// this ramps as if from unity (it can start reducing a few samples earlier); alimiter's auto-release (off in the
+// command the voice track was made with) isn't implemented. The tests compare it with ffmpeg on signals that trigger it.
 
 import { LIMITER } from "./config";
 

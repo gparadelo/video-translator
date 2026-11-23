@@ -1,6 +1,7 @@
-// One beat's voice from ElevenLabs: a port of scripts/vt.py's tts_beat (the request body, the cache key, what
+// One beat's voice from ElevenLabs: a port of the old Python pipeline's tts_beat (the request body, the cache key, what
 // is kept next to the clip) and api_error (what a refused request means). The request bodies and cache keys are
-// vt.py's exactly (test/produce-parity.test.ts), so a clip vt.py made and one made here are the same file name.
+// the old Python pipeline's exactly (test/produce-parity.test.ts), so a clip it made and one made here have the same
+// file name.
 // Server only: it runs in the produce route, on the person's own ElevenLabs key.
 
 import { createHash } from "node:crypto";
@@ -18,7 +19,7 @@ export type TtsBody = {
   language_code?: string;
 };
 
-/** Each beat's text as it is voiced: markers removed, stripped (vt.cmd_tts). */
+/** Each beat's text as it is voiced: markers removed, stripped. */
 export const voicedTexts = (beats: { text: string }[]) => beats.map((b) => pyStrip(stripMarkers(b.text).clean.join("")));
 
 /** vt.tts_beat's request body for beat `i` of `texts` (voicedTexts), voiced at `speed` (null = the default). */

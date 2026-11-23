@@ -15,7 +15,7 @@ export type VideoFacts = {
     codecString: string | null;
     codedWidth: number;
     codedHeight: number;
-    /** the size it's shown at, rotation applied (vt.video_size) */
+    /** the size it's shown at, rotation applied */
     width: number;
     height: number;
     rotation: 0 | 90 | 180 | 270;

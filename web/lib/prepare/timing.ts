@@ -1,4 +1,4 @@
-// A video's frame rate and length the way scripts/vt.py reads them from ffprobe (vt.cmd_analyze: `r_frame_rate`
+// A video's frame rate and length the way the old Python pipeline reads them from ffprobe (vt.cmd_analyze: `r_frame_rate`
 // as a float, and the format's `duration`), worked out from the frames' timestamps. Pure; lib/prepare/probe.ts
 // reads the timestamps with Mediabunny (in the browser, and in Node for the tests).
 
@@ -95,5 +95,5 @@ export function variableFrameRate(ticks: number[]): boolean {
   return hi > 0 && hi - lo > 1 && hi > lo * 1.05;
 }
 
-/** ffprobe's format duration as vt.py reads it: whole microseconds (it prints "%f"). */
+/** ffprobe's format duration as the old Python pipeline reads it: whole microseconds (it prints "%f"). */
 export const probeDuration = (seconds: number) => Math.round(seconds * 1e6) / 1e6;

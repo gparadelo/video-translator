@@ -5,7 +5,8 @@ import { getUser } from "@/lib/supabase/server";
 
 // GET /api/jobs/<id>/files/<lang>            -> redirects to the full-size video (source resolution), as a download
 // GET /api/jobs/<id>/files/<lang>?kind=preview -> redirects to the small copy, to play in the page
-// The redirect target is a signed link that works for one hour.
+// The redirect target is a signed link that works for one hour. The full-size video is one an older worker
+// rendered (output_key): remove that half after 2026-12-23 (see output_key in lib/jobs.ts).
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/jobs/[id]/files/[lang]">) {
   const { id, lang } = await ctx.params;
   const preview = request.nextUrl.searchParams.get("kind") === "preview";

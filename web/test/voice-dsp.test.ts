@@ -1,4 +1,4 @@
-// The voice track's signal processing (lib/pipeline) against ffmpeg, which vt.py uses: the loudness meter
+// The voice track's signal processing (lib/pipeline) against ffmpeg: the loudness meter
 // against `ebur128`, the time stretch against `atempo`, the limiter against `alimiter`. Synthetic signals only.
 // Needs ffmpeg; skipped otherwise.
 

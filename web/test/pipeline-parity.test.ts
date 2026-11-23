@@ -1,16 +1,20 @@
-// The timing plan and the voice track built in TypeScript (lib/pipeline) against scripts/vt.py on the same
-// inputs: synthetic jobs made by test/pipeline_fixture.py (no API calls) that hit the solver's corners. The
-// clips are decoded with ffmpeg here (in the browser, decodeAudioData gives the same samples: test/e2e checks).
+// The timing plan and the voice track built in TypeScript (lib/pipeline) against the old Python pipeline's, on the
+// same inputs: 33 synthetic jobs that hit the solver's corners, frozen in test/fixtures/pipeline-cases.json (each
+// one's plan inputs, its fake TTS clips as the ffmpeg command that makes them, and the plan.json and report the
+// Python pipeline made from them; see "Tests" in web/README.md). The clips are made and decoded with ffmpeg here
+// (in the browser, decodeAudioData gives the same samples: test/e2e checks).
 //
 //   plan.json: integers (frames, ids, counts) exactly; floats within 1e-9; flags and the report word for word.
-//   voice.wav: same length; outside the stretched beats every sample within 2 (the MP3 decoders differ in the
-//   last bit); the stretched beats (WSOLA here, atempo in vt.py) within 0.5 dB in level. See "Voice track
-//   parity" in docs/web-setup.md.
+//   voice.wav: against the voice track ffmpeg makes from the frozen plan (test/reference.mjs: atrim, atempo,
+//   ebur128, volume, alimiter; byte for byte what the Python pipeline made when the cases were frozen). Same
+//   length; outside the stretched beats every sample within 2 (the MP3 decoders differ in the last bit); the
+//   stretched beats (WSOLA here, atempo in ffmpeg) within 0.5 dB in level. See "Voice track parity" in
+//   docs/web-setup.md.
 //
-// Needs ffmpeg and uv; skipped otherwise.
+// Needs ffmpeg; skipped otherwise.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,29 +22,47 @@ import { parseWav } from "../lib/render/wav";
 import { buildLanguage, clipDuration } from "../lib/pipeline/build";
 import { metaFile, parseClipMeta, parseInputs } from "../lib/pipeline/inputs";
 import { writeReport } from "../lib/pipeline/plan";
+import { toneClip, voiceTrack } from "./reference.mjs";
 
-const FIXTURE = resolve(__dirname, "pipeline_fixture.py");
-const has = (cmd: string, arg = "-version") => {
+const ready = (() => {
   try {
-    execFileSync(cmd, [arg], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-};
-const ready = has("ffmpeg") && has("uv", "--version");
-const py = (...args: string[]) =>
-  execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", FIXTURE, ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
+})();
 
 export function decodeWithFfmpeg(file: string): Float32Array {
   const raw = execFileSync("ffmpeg", ["-v", "error", "-i", file, "-f", "f32le", "-ac", "1", "-"], { maxBuffer: 1 << 28 });
   return new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
 }
 
-type Case = {
-  name: string; kind: string; inputs: string; tts: string; plan: string; report: string; voice: string; job_name: string;
-  durations: Record<string, number>; tempos: number[];
+type Tone = { spans: [number, number][]; dur: number; freq: number; level_db: number };
+type FrozenPlan = {
+  beats: { tempo: number }[];
+  segments: { trimmed: number; speed: number }[];
+  flags: { cut: number | null; beat: number | null }[];
+  anchors: unknown[];
 };
+type Frozen = {
+  name: string; kind: string; job_name: string; inputs: { analysis: { base_lufs: number } }; plan: FrozenPlan; report: string;
+  clips: Record<string, { tone: Tone; meta: unknown; duration: number }>;
+};
+type Case = Frozen & { tts: string; voice: string };
+const FROZEN: Frozen[] = JSON.parse(readFileSync(resolve(__dirname, "fixtures/pipeline-cases.json"), "utf8"));
+
+/** A frozen job's clips (made with ffmpeg) and the voice track ffmpeg makes from its plan, in `dir`. */
+function makeCase(dir: string, c: Frozen): Case {
+  const tts = join(dir, c.name, "tts");
+  mkdirSync(tts, { recursive: true });
+  for (const [file, k] of Object.entries(c.clips)) {
+    toneClip(join(tts, file), k.tone.spans, k.tone.dur, k.tone.freq, k.tone.level_db);
+    writeFileSync(join(tts, metaFile(file)), JSON.stringify(k.meta));
+  }
+  const voice = voiceTrack(c.plan, tts, c.inputs.analysis.base_lufs, join(dir, c.name, "voice.wav"));
+  return { ...c, tts, voice };
+}
 
 /** Deep equality: numbers that are integers in both must be equal; other numbers within tol. */
 function compare(a: unknown, b: unknown, path: string, tol: number, out: string[]) {
@@ -57,52 +79,52 @@ function compare(a: unknown, b: unknown, path: string, tol: number, out: string[
   } else if (a !== b) out.push(`${path}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
 }
 
-describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
+describe.skipIf(!ready)("lib/pipeline against the frozen plans and ffmpeg's voice track", () => {
   let dir = "";
   let cases: Case[] = [];
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "vt-pipeline-"));
-    cases = JSON.parse(py("cases", dir, "--count", "33", "--seed", "7"));
+    cases = FROZEN.map((c) => makeCase(dir, c));
   }, 600_000);
   afterAll(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
   it("covers the solver's corners", () => {
-    const plans = cases.map((c) => JSON.parse(readFileSync(c.plan, "utf8")));
-    expect(plans.some((p) => p.flags.some((f: { cut: number | null; beat: number | null }) => f.cut !== null && f.beat !== null))).toBe(true); // conflicts
-    expect(plans.some((p) => p.flags.some((f: { beat: number | null }) => f.beat === null))).toBe(true); // dropped markers
-    expect(plans.some((p) => p.segments.some((s: { trimmed: number }) => s.trimmed > 0.02))).toBe(true);
-    expect(plans.some((p) => p.beats.some((b: { tempo: number }) => b.tempo > 1))).toBe(true);
-    expect(plans.some((p) => p.beats.some((b: { tempo: number }) => b.tempo < 1))).toBe(true);
-    expect(plans.some((p) => p.segments.some((s: { speed: number }) => Math.abs(s.speed - 1.1) < 1e-12))).toBe(true);
-    expect(plans.some((p) => p.segments.some((s: { speed: number }) => Math.abs(s.speed - 0.9) < 1e-12))).toBe(true);
+    const plans = cases.map((c) => c.plan);
+    expect(plans.length).toBe(33);
+    expect(plans.some((p) => p.flags.some((f) => f.cut !== null && f.beat !== null))).toBe(true); // conflicts
+    expect(plans.some((p) => p.flags.some((f) => f.beat === null))).toBe(true); // dropped markers
+    expect(plans.some((p) => p.segments.some((s) => s.trimmed > 0.02))).toBe(true);
+    expect(plans.some((p) => p.beats.some((b) => b.tempo > 1))).toBe(true);
+    expect(plans.some((p) => p.beats.some((b) => b.tempo < 1))).toBe(true);
+    expect(plans.some((p) => p.segments.some((s) => Math.abs(s.speed - 1.1) < 1e-12))).toBe(true);
+    expect(plans.some((p) => p.segments.some((s) => Math.abs(s.speed - 0.9) < 1e-12))).toBe(true);
     expect(plans.some((p) => p.beats.length === 1)).toBe(true); // a one-beat script
     expect(plans.some((p) => p.segments.length === 1 && p.anchors.length === 0)).toBe(true); // no cuts: one clip
   });
 
   it("builds the same plan.json, flags and report", () => {
     for (const c of cases) {
-      const inputs = parseInputs(JSON.parse(readFileSync(c.inputs, "utf8")));
+      const inputs = parseInputs(c.inputs);
       const clips = inputs.clips.map((k) => {
         const samples = decodeWithFfmpeg(join(c.tts, k.file));
-        // the clip's length as vt.py had it (ffprobe)
-        expect(clipDuration(samples.length), `${c.name} ${k.file}`).toBe(c.durations[k.file]);
+        // the clip's length as the Python pipeline had it (ffprobe)
+        expect(clipDuration(samples.length), `${c.name} ${k.file}`).toBe(c.clips[k.file].duration);
         return { meta: parseClipMeta(JSON.parse(readFileSync(join(c.tts, metaFile(k.file)), "utf8")), k.file), samples, sampleRate: 44100 };
       });
       const built = buildLanguage(inputs, clips);
-      const want = JSON.parse(readFileSync(c.plan, "utf8"));
       const diffs: string[] = [];
-      compare(JSON.parse(JSON.stringify(built.portable)), want, c.name, 1e-9, diffs);
+      compare(JSON.parse(JSON.stringify(built.portable)), c.plan, c.name, 1e-9, diffs);
       expect(diffs, `${c.name} (${c.kind})`).toEqual([]);
-      expect(writeReport(c.job_name, built.plan), c.name).toBe(readFileSync(c.report, "utf8"));
+      expect(writeReport(c.job_name, built.plan), c.name).toBe(c.report);
     }
   });
 
-  it("builds the same voice.wav", () => {
+  it("builds the same voice.wav as ffmpeg", () => {
     const rows: string[] = [];
     for (const c of cases) {
-      const inputs = parseInputs(JSON.parse(readFileSync(c.inputs, "utf8")));
+      const inputs = parseInputs(c.inputs);
       const clips = inputs.clips.map((k) => ({
         meta: parseClipMeta(JSON.parse(readFileSync(join(c.tts, metaFile(k.file)), "utf8")), k.file),
         samples: decodeWithFfmpeg(join(c.tts, k.file)), sampleRate: 44100,
@@ -120,7 +142,7 @@ describe.skipIf(!ready)("lib/pipeline against vt.py", () => {
       });
       const inStretch = (k: number) => stretchedSpans.some(([a, z]) => k >= a && k < z);
       // With a stretched beat the loudness measured before the gain differs a little (atempo keeps ~0.1-0.2 dB
-      // more energy than a plain change of length; WSOLA doesn't), and after rounding to 0.1 LU, as vt.lufs reads
+      // more energy than a plain change of length; WSOLA doesn't), and after rounding to 0.1 LU, as ebur128 prints
       // it, the whole track can be 0.1 dB, or with most of it stretched 0.2 dB, louder or quieter.
       let xy = 0, yy = 0;
       for (let k = 0; k < want.frames; k++) {

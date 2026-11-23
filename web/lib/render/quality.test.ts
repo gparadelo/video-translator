@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pickQuality, previewQuality, qualityOptions, renderSize, scaledBitrate, sizeForShortSide } from "./quality";
 
-describe("same numbers as scripts/vt.py", () => {
+describe("same numbers as the old Python pipeline", () => {
   // expected values printed by vt.render_size / vt.scaled_bitrate("20M", ...)
   it.each([
     [2160, 3840, 2160, 3840, 20_000_000],

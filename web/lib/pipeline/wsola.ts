@@ -1,5 +1,5 @@
 // Time stretching without changing pitch (WSOLA: waveform-similarity overlap-add), for the small tempo changes
-// the timing plan makes to a beat's voice (about 0.96 to 1.07). It stands in for ffmpeg's atempo (vt.py).
+// the timing plan makes to a beat's voice (about 0.96 to 1.07). It stands in for ffmpeg's atempo.
 //
 // The output is cut into 23 ms Hann windows that overlap by half. Each window is taken from the input near
 // where the tempo says it should come from, shifted by up to +-8.7 ms to the spot whose waveform best continues

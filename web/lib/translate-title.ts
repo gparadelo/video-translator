@@ -4,7 +4,7 @@ import { LANGS, langName } from "@/lib/jobs";
 import { CLAUDE } from "@/lib/produce/config";
 import { cleanTitle, MAX_TITLE, NON_LATIN, shorten, toAscii } from "@/lib/titles";
 
-// Same model the translations use (config.default.toml -> [claude] model).
+// Same model the translations use (lib/produce/config.ts CLAUDE).
 const MODEL = CLAUDE.model;
 const CODES = Object.keys(LANGS);
 

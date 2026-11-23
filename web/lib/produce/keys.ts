@@ -1,5 +1,5 @@
 // Where a job's files are in R2 (see "Files in storage" in docs/web-setup.md). The database builds the same keys
-// (save_plan, save_preview, mark_voiced, worker_prepared); the app builds them from the row, never from what a
+// (save_plan, save_preview, mark_voiced, save_prepared); the app builds them from the row, never from what a
 // browser sends.
 
 /**

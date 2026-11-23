@@ -1,19 +1,18 @@
-// The plan inputs of one language: what the browser builds plan.json and voice.wav from. Written today by the
-// worker after the voice is recorded (vt.plan_inputs); from phase 3 on by the app's own TTS route, in exactly
-// this format. Stored in R2 under u/<user>/<job>/out/<lang>/g<generation>/ (see "Files in storage" in
-// docs/web-setup.md):
+// The plan inputs of one language: what the browser builds plan.json and voice.wav from, written by the produce
+// steps once the voice is recorded (lib/produce/steps.ts; older ones by the worker, in the same format). Stored
+// in R2 under u/<user>/<job>/out/<lang>/g<generation>/ (see "Files in storage" in docs/web-setup.md):
 //
 //   inputs.json      -> PlanInputs below ("format": 1)
 //   tts/<name>.mp3   -> one ElevenLabs clip per beat (mp3_44100_128), as the API returned it
 //   tts/<name>.json  -> ClipMeta below: the text that was voiced and the API's per-character timing
 //
-// Raise INPUTS_FORMAT (here and in vt.py) when a change means older inputs can't be read.
+// Raise INPUTS_FORMAT when a change means older inputs can't be read.
 
 import { FIT_KEYS, type Fit } from "./config";
 
 export const INPUTS_FORMAT = 1;
 
-/** One cut of the original video, tied to the word spoken at that moment (vt.cmd_analyze). */
+/** One cut of the original video, tied to the word spoken at that moment. */
 export type Anchor =
   | { id: number; t: number; kind: "lead"; frac: number }
   | { id: number; t: number; kind: "tail"; off: number }
@@ -22,7 +21,7 @@ export type Anchor =
 export type Analysis = {
   /** the original video: length in seconds and frame rate (ffprobe r_frame_rate as a float) */
   video: { dur: number; fps: number };
-  /** the size ffmpeg shows the video at, rotation applied (vt.video_size): plan.json "source" */
+  /** the size ffmpeg shows the video at, rotation applied: plan.json "source" */
   source: { width: number; height: number };
   /** when the original voiceover's first word starts and its last word ends (seconds) */
   speech_start: number;

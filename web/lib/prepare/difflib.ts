@@ -1,6 +1,6 @@
-// Python's difflib.SequenceMatcher (get_matching_blocks and ratio), which scripts/vt.py uses to tie the script's
+// Python's difflib.SequenceMatcher (get_matching_blocks and ratio), which the old Python pipeline uses to tie the script's
 // words to the aligner's (cmd_analyze, autojunk off) and to tell whether the name check changed more than names
-// (fix_names, autojunk on). A line-by-line port of CPython's Lib/difflib.py, without isjunk (vt.py never passes
+// (fix_names, autojunk on). A line-by-line port of CPython's Lib/difflib.py, without isjunk (the old Python pipeline never passes
 // one). Elements compare by value: strings (words) or single characters (code points).
 
 export type Block = [a: number, b: number, size: number];

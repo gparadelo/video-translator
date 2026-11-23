@@ -38,7 +38,7 @@ ffmpeg's `scale=270:-2,select=gt(scene,0.2)` scene score, `lib/prepare/scenes.ts
 loudness, and the voiceover's sound. Then short routes on the person's own keys
 (`app/api/jobs/[id]/prepare/{media,transcribe,names,align}`, `lib/prepare/steps.ts`) transcribe it (ElevenLabs),
 check the spelling of names (Claude), time every word (ElevenLabs forced alignment) and write `analysis.json`, a
-port of `scripts/vt.py`'s prepare (`test/prepare-parity.test.ts`, `test/scenes.test.ts`). No worker is involved.
+port of the old Python pipeline's prepare (`test/prepare-parity.test.ts`, `test/scenes.test.ts`).
 
 ## Translating and voicing
 
@@ -46,7 +46,7 @@ After the person approves the transcript, the job page makes each language (`com
 `lib/produce/run.ts`) through short routes that run on the person's own keys
 (`app/api/jobs/[id]/produce/[lang]/{translate,tts,fit}`, `lib/produce/steps.ts`): Claude translates and rewrites
 the beats that don't fit, ElevenLabs voices one beat per call, every step is saved in R2, and a closed tab
-carries on where it stopped. It's a port of `scripts/vt.py`'s produce loop (same prompts, request bodies and
+carries on where it stopped. It's a port of the old Python pipeline's produce loop (same prompts, request bodies and
 cache keys; `test/produce-parity.test.ts`). Then the page builds the timing plan and the voice track
 (`lib/pipeline`) and renders.
 
@@ -55,7 +55,7 @@ cache keys; `test/produce-parity.test.ts`). Then the page builds the timing plan
 The video is rendered on the job
 page, in the person's browser (`lib/render`, WebCodecs + [Mediabunny](https://mediabunny.dev)). The source
 is read from R2 in pieces, one decoded frame is held at a time, and each clip gets exactly the frames
-`scripts/vt.py`'s ffmpeg command would give it (`lib/render/frames.ts`). The page first makes a 720p preview
+ffmpeg's retiming command would give it (`lib/render/frames.ts`). The page first makes a 720p preview
 (uploaded, so it plays on the page), then the full quality on Download (saved on the computer). Desktop
 Chrome and Edge work best; other browsers are told so. Files and formats: "Files in storage" in
 [docs/web-setup.md](../docs/web-setup.md).
@@ -63,10 +63,35 @@ Chrome and Edge work best; other browsers are told so. Files and formats: "Files
 ## Tests
 
 ```bash
-pnpm test   # unit tests + checks against ffmpeg and vt.py, with fake Claude/ElevenLabs (needs ffmpeg and uv)
+pnpm test   # unit tests + checks against ffmpeg, with fake Claude/ElevenLabs
 pnpm e2e    # in headless Chrome: checks, measures and prepares test videos, produces, builds and renders them,
-            # and compares everything with vt.py and the CLI
+            # and compares everything with ffmpeg and the frozen references
 ```
+
+Both need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg`); `pnpm e2e` also needs Google Chrome
+(`CHROME_PATH` or `--chrome`). No Python. Without ffmpeg both stop with a message (`test/ffmpeg-check.mjs`);
+`VT_SKIP_FFMPEG=1 pnpm test` runs only the plain unit tests and says that everything else was skipped.
+
+**ffmpeg version: 9.0** (Homebrew's 9.0.2 when the references were frozen, with LAME 4.0 and x264 r3222). Most checks compare the
+app with ffmpeg run at that moment, so they hold on any version, but a few results also depend on ffmpeg's own
+code: the scene scores (the port follows ffmpeg 9's swscale), and the test videos and fake voice clips the tests
+encode (x264, ffmpeg's AAC encoder, libmp3lame), whose measures and lengths are in the frozen references. With
+another version the tests print a warning first; a failing scene score, cut, loudness or clip length there may be
+that ffmpeg's doing, not the app's: check with ffmpeg 9.0 before changing code or fixtures.
+
+What the tests compare against:
+
+- **ffmpeg itself**, run from the tests (`test/reference.mjs`, `test/videos.mjs`): frame selection against
+  ffmpeg's clip retiming command, scene scores and cuts against `scale=270:-2,select,metadata=print`, loudness
+  against `ebur128`, length, frame rate and size against `ffprobe -show_streams`, the voice track against the one
+  ffmpeg makes from the same plan (`atrim`, `atempo`, `volume`, `alimiter`), and renders against ffmpeg's render
+  of the same plan.
+- **Frozen references** in `test/fixtures/` for what only the old Python pipeline (removed in phase 5)
+  computed: the timing plans and reports (`pipeline-cases.json`), the analyses, transcripts and requests of the
+  prepare half (`prepare-parity.json`), the translations, voice requests and plan inputs of the produce half
+  (`produce-parity.json`), and the jobs of `pnpm e2e` (`e2e.json`). They were made once by running the Python
+  pipeline against the fakes in `test/mocks.mjs`, and can't be made again. If a deliberate change makes the web
+  app differ from them, update the fixture by hand in the same commit and say why.
 
 ## Learn More
 

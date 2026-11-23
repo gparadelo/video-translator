@@ -1,22 +1,22 @@
 // The prepare half of a job, as short steps the job page calls one after another through the prepare routes
-// (app/api/jobs/<id>/prepare/...): scripts/vt.py's prepare() (cmd_analyze, transcribe, fix_names, cmd_analyze again)
-// and the worker's align, without the worker:
+// (app/api/jobs/<id>/prepare/...): the old Python pipeline's prepare() (cmd_analyze, transcribe, fix_names,
+// cmd_analyze again) and the old worker's align, ported:
 //
 //   media       the browser measures the video (lib/prepare/local.ts) and uploads the voiceover's audio and
 //               prep/media.json; this step hands out the upload links and checks what arrived
-//   transcribe  ElevenLabs speech-to-text of prep/audio.*           -> prep/transcript.json   (vt.transcribe)
-//   names       Claude checks the spelling of names in it            -> prep/names.json        (vt.fix_names)
-//   align       ElevenLabs forced alignment of the transcript       -> prep/alignment.json    (vt.forced_align)
-//               and the analysis                                    -> analysis.json          (vt.cmd_analyze)
+//   transcribe  ElevenLabs speech-to-text of prep/audio.*           -> prep/transcript.json
+//   names       Claude checks the spelling of names in it            -> prep/names.json
+//   align       ElevenLabs forced alignment of the transcript       -> prep/alignment.json
+//               and the analysis                                    -> analysis.json
 //               then the project is ready for review (save_prepared)
 //
-// and after the person approved an edited transcript (job "aligning"): align again (worker.Job.align) -> producing,
+// and after the person approved an edited transcript (job "aligning"): align again -> producing,
 // or back to the review when the edits broke the timing (save_aligned).
 //
 // Each step does one paid call at most and saves what it made before it answers, so a step can always be asked
 // again (a dropped connection, a closed tab): it picks up from what's saved, and nothing is paid twice. One
-// deliberate difference from vt.prepare: when the name check changes the transcript, vt.py had already timed the
-// unfixed one and times it again; here the names are checked first, so the voiceover is aligned once. The analysis
+// deliberate difference from the old pipeline: when the name check changed the transcript, it had already timed the
+// unfixed one and timed it again; here the names are checked first, so the voiceover is aligned once. The analysis
 // is the same (test/prepare-parity.test.ts).
 // Server only. Storage, ElevenLabs and Claude come in as arguments (fakes in tests).
 
@@ -121,7 +121,8 @@ export type MediaRequest =
 export async function mediaStep(j: PrepJob, links: Links, req: MediaRequest): Promise<MediaResult> {
   const have = await loadMedia(j, links);
   if (have) return { ready: true, dur: have.dur, cuts: have.cuts.length };
-  // an older worker's analysis.json has the measures (vt.py's own); then only the voiceover is needed
+  // an older worker's analysis.json has the measures; then only the voiceover is needed (media.json from:
+  // "analysis"). Remove after 2026-12-23, when no project the worker prepared is left (see Media.from)
   const derived = await savedAnalysis(j);
   if (req.phase === "start") {
     if ((await links.size(sourceKey(j))) === null) throw new ProduceError(GONE, { status: 410 });
@@ -178,7 +179,7 @@ async function loadTranscript(j: PrepJob): Promise<Transcript | null> {
 
 const wordCount = (t: Transcript) => t.words.filter((w) => (w.type ?? "word") === "word" && (w.text ?? "").trim()).length;
 
-/** The voiceover transcribed (vt.transcribe), or the saved transcript. */
+/** The voiceover transcribed, or the saved transcript. */
 export async function transcribeStep(j: PrepJob, eleven: { apiKey: string; fetchFn?: typeof fetch; api?: string }): Promise<TranscribeResult> {
   if (j.status !== "preparing") throw new ProduceError("this project isn't being prepared", { status: 409, code: "gone" });
   const saved = await loadTranscript(j);
@@ -199,7 +200,7 @@ type Names = { format: number; base_lang: string; script: string; names_fixed: s
 
 export type NamesStepResult = { changed: string[]; refused: boolean; cached: boolean };
 
-/** The transcript's beats and its language (vt.cmd_analyze step 0). */
+/** The transcript's beats and its language. */
 function fromTranscript(j: PrepJob, t: Transcript): { beats: string[]; lang: string } {
   const beats = splitBeats(scriptFromWords(t.words, ANALYZE.beat_pause));
   if (!beats.length) throw new ProduceError(NO_SPEECH);
@@ -213,7 +214,7 @@ async function loadNames(j: PrepJob): Promise<Names | null> {
   return n && n.format === NAMES_FORMAT && typeof n.script === "string" && Array.isArray(n.names_fixed) ? n : null;
 }
 
-/** Claude checks the spelling of names in the transcript (vt.fix_names), or the saved result. */
+/** Claude checks the spelling of names in the transcript, or the saved result. */
 export async function namesStep(j: PrepJob, claude: ClaudeClient | null): Promise<NamesStepResult> {
   if (j.status !== "preparing") throw new ProduceError("this project isn't being prepared", { status: 409, code: "gone" });
   const saved = await loadNames(j);
@@ -241,7 +242,7 @@ export type AlignResult = { status: "needs_review" | "producing"; warnings: stri
 
 type SavedAlignment = Alignment & { _text?: string };
 
-/** The forced alignment of `text` (vt.cmd_analyze step 1): the saved one when it was for the same text. */
+/** The forced alignment of `text`: the saved one when it was for the same text. */
 async function alignment(j: PrepJob, m: Media, text: string, eleven: { apiKey: string; fetchFn?: typeof fetch; api?: string }): Promise<Alignment> {
   const saved = await readJson<SavedAlignment>(j, prepKey(j, "alignment.json"), 20_000_000);
   if (saved && saved._text === text && Array.isArray(saved.words)) return saved;
@@ -257,7 +258,7 @@ async function alignment(j: PrepJob, m: Media, text: string, eleven: { apiKey: s
  * Time the transcript and write analysis.json (format 1, as vt.portable_analysis). While preparing, the transcript
  * is the one the name check left, and `prepared` hands it to the person for review. While aligning (an approved
  * transcript that was edited, or that an older worker made), it's the job's, and `aligned` either lets the job page
- * translate it or sends it back to the review, when the edits broke the timing (worker.Job.align).
+ * translate it or sends it back to the review, when the edits broke the timing (the old worker's align).
  */
 export async function alignStep(j: PrepJob, eleven: { apiKey: string; fetchFn?: typeof fetch; api?: string },
                                 done: { prepared: (p: Prepared) => Promise<void>; aligned: (a: Aligned) => Promise<void> }): Promise<AlignResult> {
@@ -269,7 +270,7 @@ export async function alignStep(j: PrepJob, eleven: { apiKey: string; fetchFn?: 
     const beats = splitBeats(names.script);
     if (!beats.length) throw new ProduceError(NO_SPEECH);
     const al = await alignment(j, m, beats.join("\n\n"), eleven);
-    // vt.prepare analyzes again after a name fix, and then reads the cuts back from cuts.txt (3 decimals)
+    // the old pipeline analyzed again after a name fix, reading the cuts back from cuts.txt (3 decimals)
     const A = analyzeVoiceover({ beats, alignment: al, cuts: names.names_fixed.length ? cutsAsSaved(m.cuts) : m.cuts, video, lang: names.base_lang });
     await putJson(j, analysisKey(j), A);
     await done.prepared({ baseLang: names.base_lang, script: A.beats.map((b) => b.text).join("\n\n"), namesFixed: names.names_fixed, warnings: A.warnings });

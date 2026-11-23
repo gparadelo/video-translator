@@ -1,12 +1,11 @@
-// The analysis settings of config.default.toml (vt.py reads that file until the Python pipeline is removed: keep the
-// two the same; test/prepare-parity.test.ts checks they are).
+// The analysis settings.
 
 export const ANALYZE = {
-  /** [fit] scene_threshold: cut detection sensitivity (a frame scoring above it is a cut) */
+  /** scene_threshold: cut detection sensitivity (a frame scoring above it is a cut) */
   scene_threshold: 0.2,
-  /** [fit] beat_pause: a silence this long (seconds) mid-sentence starts a new beat in a transcript */
+  /** beat_pause: a silence this long (seconds) mid-sentence starts a new beat in a transcript */
   beat_pause: 1.0,
-  /** [claude] fix_names: after transcribing, Claude fixes misspelled names */
+  /** fix_names: after transcribing, Claude fixes misspelled names */
   fix_names: true,
 };
 

@@ -1,6 +1,6 @@
 // What the job page does with a new video (job "preparing") or an approved, edited transcript ("aligning"): it
 // measures the video here in the browser (local.ts) and calls the prepare steps (lib/prepare/steps.ts, through
-// app/api/jobs/<id>/prepare/...) one after another, as scripts/vt.py's prepare() did on the worker:
+// app/api/jobs/<id>/prepare/...) one after another, as the old Python pipeline's prepare() did on the worker:
 //
 //   media (measure the video, upload the voiceover and prep/media.json) -> transcribe -> names -> align
 //   aligning: media (only if it isn't there yet) -> align

@@ -5,31 +5,29 @@
 // checks the browser end to end), with the rotation left out so this code applies it:
 //   - every scaled picture must be ffmpeg's `scale=270:-2` to the bit,
 //   - every frame's score must be ffmpeg's (it prints 6 decimals),
-//   - the cuts must be vt.detect_cuts' exactly.
+//   - the cuts must be the ones ffmpeg's `select='gt(scene,0.2)'` finds, snapped to the frame grid (test/reference.mjs).
 //
-// Needs ffmpeg and uv; skipped otherwise.
+// Needs ffmpeg; skipped otherwise.
 
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ANALYZE } from "../lib/prepare/config";
 import { ALIGN, cutsFromScores, initFilter, LumaScaler, ptsTime, rotatePlane, SceneScorer, sceneSize } from "../lib/prepare/scenes";
 import { frameTimes } from "./media-node";
+import { media, sceneScores } from "./reference.mjs";
 import { makeVideo, probe, VIDEOS } from "./videos.mjs";
 
-const FIXTURE = resolve(__dirname, "prepare_fixture.py");
-const has = (cmd: string, arg = "-version") => {
+const ready = (() => {
   try {
-    execFileSync(cmd, [arg], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-};
-const ready = has("ffmpeg") && has("uv", "--version");
-const py = (...args: string[]) =>
-  execFileSync("uv", ["run", "-q", "--no-project", "--with", "requests", "python", FIXTURE, ...args], { encoding: "utf8", maxBuffer: 1 << 28 });
+})();
 
 /**
  * ffmpeg's decoded luma planes, every frame, as yuv420p (the select filter gets that), one at a time to `each`: as
@@ -108,16 +106,16 @@ describe.skipIf(!ready)("scene cuts against ffmpeg", () => {
       expect(times.length).toBe(decoded);
       expect(differentPictures).toBe(0);
 
-      const theirs = JSON.parse(py("scores", path)) as [string, string][];
+      const theirs = sceneScores(path) as [string, string][];
       expect(theirs.length).toBe(ours.length);
       ours.forEach((o, i) => {
         expect(o.score.toFixed(6)).toBe(theirs[i][1]);
         expect(ptsTime(o.t)).toBe(Number(theirs[i][0]));
       });
 
-      const vt = JSON.parse(py("media", path));
-      const cuts = cutsFromScores(ours, 0.2, vt.dur, vt.fps);
-      expect(cuts).toEqual(vt.cuts);
+      const ff = media(path, ANALYZE.scene_threshold);
+      const cuts = cutsFromScores(ours, ANALYZE.scene_threshold, ff.dur, ff.fps);
+      expect(cuts).toEqual(ff.cuts);
       const expected = (VIDEOS[name] as { cuts: number[] | null }).cuts;
       if (expected) expect(cuts.map((c) => Math.round(c * 100) / 100)).toEqual(expected);
       if (name === "steps") { // 19 levels isn't a cut, nor is the fade; 21 and 30 are, up and down, and back from black

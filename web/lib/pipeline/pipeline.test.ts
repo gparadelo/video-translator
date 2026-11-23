@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clipDuration } from "./build";
 import { FIT } from "./config";
@@ -7,18 +5,6 @@ import { parseInputs } from "./inputs";
 import { pyFormat, pyRound, stripMarkers, words } from "./py";
 import { encodeWav } from "./voice";
 import { parseWav } from "../render/wav";
-
-describe("config", () => {
-  it("FIT is config.default.toml's [fit] (vt.py reads that file)", () => {
-    const toml = readFileSync(resolve(__dirname, "../../../config.default.toml"), "utf8");
-    const fit = toml.split("[fit]")[1].split("\n[")[0];
-    for (const [k, v] of Object.entries(FIT)) {
-      const m = new RegExp(`^${k}\\s*=\\s*([\\d.]+)`, "m").exec(fit);
-      expect(m, k).not.toBeNull();
-      expect(Number(m![1]), k).toBe(v);
-    }
-  });
-});
 
 describe("Python behaviour", () => {
   it("round() halves to even", () => {

@@ -1,4 +1,4 @@
-// Number handling that has to match Python (scripts/vt.py) and ffmpeg bit for bit, because the browser
+// Number handling that has to match Python (the old Python pipeline) and ffmpeg bit for bit, because the browser
 // renders from the same plan and must pick the same frames.
 
 export type Rational = { num: number; den: number };
@@ -80,7 +80,7 @@ export function avReduce(num: bigint, den: bigint, max: bigint): Rational {
 }
 
 /**
- * The frame rate ffmpeg uses for `fps=<x>` when x is a decimal (vt.py writes the float, e.g. 29.97002997002997):
+ * The frame rate ffmpeg uses for `fps=<x>` when x is a decimal (the old Python pipeline writes the float, e.g. 29.97002997002997):
  * av_parse_video_rate -> av_d2q(x, 1001000). 29.97002997002997 -> 30000/1001, 30.0 -> 30/1.
  */
 export function ffmpegRate(fps: number): Rational {

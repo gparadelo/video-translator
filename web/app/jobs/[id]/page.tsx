@@ -285,6 +285,7 @@ function Review({ job, act }: { job: Job; act: Act }) {
  */
 function Outputs({ job, outputs, refresh, act }: { job: Job; outputs: Output[]; refresh: () => Promise<void>; act: Act }) {
   const missing = job.status === "producing" ? job.languages.filter((l) => l !== job.base_lang && !outputs.some((o) => o.lang === l)) : [];
+  // videos an older worker rendered: remove after 2026-12-23 (see output_key in lib/jobs.ts)
   const rendered = outputs.filter((o) => o.status === "done" && o.output_key);
   // voiced: this tab builds the voice track first; ready: it renders. Older projects need neither.
   const anyReady = outputs.some((o) => o.status === "ready" || o.status === "voiced");
