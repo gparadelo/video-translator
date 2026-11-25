@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 import { LoginForm } from "./LoginForm";
 
-// Why the last sign-in link didn't work, set by /auth/confirm (see its redirect).
+// Why the last emailed link (confirm sign-up, reset password) didn't work, set by /auth/confirm (see its redirect).
 const LINK_ERRORS: Record<string, string> = {
   other_browser:
-    "That link was opened in a different browser from the one you requested it in. Request a new link here and open it in this same browser.",
-  expired: "That sign-in link has expired or was already used. Request a new one.",
-  link: "That sign-in link didn't work. Request a new one.",
+    "That link was opened in a different browser from the one you used here. Sign in, or ask for a new link, and open it in this same browser.",
+  expired: "That link has expired or was already used. Try signing in, or ask for a new one.",
+  link: "That link didn't work. Try signing in, or ask for a new one.",
 };
 
 export default function LoginPage(props: PageProps<"/login">) {

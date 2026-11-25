@@ -7,12 +7,19 @@ and a Cloudflare R2 bucket (the videos). A worker on a Mac does the actual trans
 1. Create a project at supabase.com (the free plan is enough).
 2. **Database:** open SQL Editor and run each file in [supabase/migrations/](../supabase/migrations), oldest
    first: paste all of it, run, then the next one.
-3. **Login links:** Authentication -> URL Configuration. Set Site URL to the app's address, and add
-   `http://localhost:3000/auth/confirm` and `https://YOUR-APP/auth/confirm` to Redirect URLs.
-4. **People:** Authentication -> Users -> Add user, once per person (their email). The login page only
-   signs in people who already exist; it never creates accounts.
-5. **Approve them:** Table Editor -> `profiles` -> set `approved` to true for each person. Without it they
-   can sign in but not create jobs.
+3. **Sign-in:** Authentication -> Sign In / Providers. Keep **Allow new users to sign up** on and the
+   **Email** provider on (email + password). Anyone can create an account; projects run on their own keys
+   (below), so that costs you nothing.
+   - **Confirm email:** with it on, a new person must open a link we email them before they can sign in.
+     Supabase's built-in email sender only sends a few emails an hour, so for more than a handful of
+     sign-ups either turn **Confirm email** off or add your own SMTP (Authentication -> Emails -> SMTP).
+     Password-reset emails use the same sender.
+4. **Email links:** Authentication -> URL Configuration. Set Site URL to the app's address, and add
+   `http://localhost:3000/**` and `https://YOUR-APP/**` to Redirect URLs (the reset link carries
+   `?next=/reset-password`, which an exact `/auth/confirm` entry doesn't match).
+5. **Blocking someone:** Table Editor -> `profiles` -> set `approved` to false. They can still sign in but
+   can't create projects. Everyone starts with it true. People who signed in with email links before have
+   no password yet: they use "Forgot your password?" on the login page to set one.
 6. **Keys:** Project Settings -> API. The project URL and the publishable key go in the web app's
    settings (below). The secret (service role) key is only for the worker: never put it in the web app.
 
@@ -88,6 +95,12 @@ database fails every job.
    and Claude keys from it, and restart the worker (`worker/install-service.sh`, or Ctrl-C and start it again).
    Until it restarts, the old worker still has your keys in memory and every job is billed to you.
 5. Everyone, you included, opens Settings and saves their keys and voice.
+
+## Upgrading an existing setup to open sign-up
+1. Run `supabase/migrations/20261125000000_open_signup.sql`: everyone, old accounts included, can now
+   create projects.
+2. Change the Supabase settings in steps 3 and 4 of section 1 (sign-ups on, Confirm email, Redirect URLs).
+3. Deploy. Tell existing people to use "Forgot your password?" once to set a password.
 
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.

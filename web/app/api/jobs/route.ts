@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
   // Projects run on the person's own keys and voice: don't start one that can't finish.
   const { data: profile } = await supabase.from("profiles").select("approved").maybeSingle();
-  if (!profile?.approved) return fail(403, "your account isn't approved yet");
+  if (!profile?.approved) return fail(403, "this account has been blocked from creating projects");
   const { data: setupRows, error: setupError } = await supabase.rpc("my_key_status");
   const setup = toStatus(setupRows);
   if (setupError || !setup) return fail(500, "couldn't check your Settings - try again");
@@ -61,8 +61,8 @@ export async function POST(request: NextRequest) {
     .select()
     .single();
   if (error) {
-    // 42501: row-level security said no, i.e. this account hasn't been approved yet.
-    return error.code === "42501" ? fail(403, "your account isn't approved yet") : fail(500, error.message);
+    // 42501: row-level security said no, i.e. this account has been blocked (profiles.approved = false).
+    return error.code === "42501" ? fail(403, "this account has been blocked from creating projects") : fail(500, error.message);
   }
 
   return NextResponse.json({

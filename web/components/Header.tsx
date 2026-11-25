@@ -34,6 +34,9 @@ export function Header() {
           <Link href="/settings" className="underline">
             Settings
           </Link>
+          <Link href="/reset-password" className="underline">
+            Password
+          </Link>
           <button type="submit" className="underline">
             Sign out
           </button>
