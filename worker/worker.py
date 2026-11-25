@@ -4,7 +4,7 @@
 # dependencies = ["requests", "anthropic", "boto3", "cryptography"]
 # ///
 """
-worker.py - does the web app's jobs on this Mac.
+worker.py - does the web app's jobs on this computer (a Mac or Windows).
 
 It only makes outgoing connections: it asks the database for work, downloads the video from storage,
 runs the pipeline in scripts/vt.py, and uploads the results.
@@ -15,7 +15,8 @@ Every job runs on its owner's own ElevenLabs and Claude keys and voice, saved in
   uv run worker/worker.py            # run until stopped
   uv run worker/worker.py --once     # do the jobs that are waiting, then exit
 
-Settings come from worker/.env (see worker/.env.example). install-service.sh makes it start at login.
+Settings come from worker/.env (see worker/.env.example). install-service.sh (Mac) or install-service.ps1
+(Windows) makes it start at login.
 """
 from __future__ import annotations
 
@@ -53,7 +54,7 @@ def say(msg: str):
 def load_env_file(path: Path):
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():  # -sig: Notepad may start it with a BOM
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
@@ -163,7 +164,7 @@ class Storage:
             raise
         tmp = dest.with_suffix(dest.suffix + ".part")
         self.s3.download_file(self.bucket, key, str(tmp), Callback=progress(total))
-        tmp.rename(dest)
+        tmp.replace(dest)
 
     def upload(self, path: Path, key: str, progress):
         self.s3.upload_file(str(path), self.bucket, key, ExtraArgs={"ContentType": "video/mp4"},
@@ -375,11 +376,34 @@ class Job:
                 awake.terminate()
 
 
+class WindowsAwake:
+    """Windows' way to keep the computer from sleeping: a flag on the thread that asks for it."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+    def __init__(self):
+        import ctypes
+        self.k32 = ctypes.windll.kernel32
+        self.k32.SetThreadExecutionState(self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED)
+
+    def terminate(self):
+        self.k32.SetThreadExecutionState(self.ES_CONTINUOUS)
+
+
 def keep_awake():
-    """Stop the Mac from going to sleep while a job runs (WORKER_KEEP_AWAKE=off to disable)."""
-    if os.environ.get("WORKER_KEEP_AWAKE", "job") == "off" or not shutil.which("caffeinate"):
+    """Stop the computer from going to sleep while a job runs (WORKER_KEEP_AWAKE=off to disable)."""
+    if os.environ.get("WORKER_KEEP_AWAKE", "job") == "off":
+        return None
+    if os.name == "nt":
+        return WindowsAwake()
+    if not shutil.which("caffeinate"):
         return None
     return subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+
+
+def default_root() -> str:
+    if os.name == "nt":
+        return str(Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "Video Translator Worker")
+    return "~/Library/Application Support/Video Translator Worker"
 
 
 def clean_up(root: Path):
@@ -396,15 +420,23 @@ def clean_up(root: Path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--once", action="store_true", help="do the waiting jobs, then exit")
+    ap.add_argument("--log", type=Path, help="append everything this prints to this file (for running in the background)")
     a = ap.parse_args()
+    if a.log:
+        a.log.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(a.log, "a", encoding="utf-8", buffering=1)
 
     load_env_file(HERE / ".env")
-    root = Path(os.environ.get("VT_WORKER_DIR") or "~/Library/Application Support/Video Translator Worker").expanduser()
+    root = Path(os.environ.get("VT_WORKER_DIR") or default_root()).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     os.environ["VT_JOBS_DIR"] = str(root)  # a config.toml there applies to every job
     vt.load_env()
     try:
         vt.check_tools()
+    except vt.VTError as e:
+        sys.exit(str(e))
+    try:
+        codec = vt.video_codec(vt.config()["render"])
     except vt.VTError as e:
         sys.exit(str(e))
     master = secrets_key()
@@ -417,7 +449,7 @@ def main():
 
     worker_id = os.environ.get("WORKER_ID") or socket.gethostname().split(".")[0]
     db, store = Database(), Storage()
-    say(f"worker \"{worker_id}\" started; job folders in {root}")
+    say(f"worker \"{worker_id}\" started; job folders in {root}; videos encoded with {codec}")
     last_clean = 0.0
     while True:
         try:
@@ -437,4 +469,5 @@ def main():
 
 
 if __name__ == "__main__":
+    vt.ensure_utf8_mode()
     main()

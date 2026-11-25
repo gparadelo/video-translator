@@ -104,7 +104,7 @@ def load_env():
         p = d / ".env" if d else None
         if not p or not p.exists():
             continue
-        for line in p.read_text().splitlines():
+        for line in p.read_text(encoding="utf-8-sig").splitlines():  # -sig: Notepad may start it with a BOM
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -165,9 +165,59 @@ def config(job: Path | None = None) -> dict:
 
 
 def check_tools():
+    hint = "`winget install Gyan.FFmpeg`, then open a new terminal" if os.name == "nt" else "`brew install ffmpeg`"
     for t in ("ffmpeg", "ffprobe"):
         if not shutil.which(t):
-            die(f"{t} not found - install it with `brew install ffmpeg`")
+            die(f"{t} not found - install it with {hint}")
+
+
+def ensure_utf8_mode():
+    """On Windows Python reads and writes text as the local code page (cp1252), which garbles or refuses
+    translated scripts. Run this program again in UTF-8 mode instead (Python 3.15 makes it the default)."""
+    if os.name == "nt" and not sys.flags.utf8_mode:
+        try:
+            sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
+        except KeyboardInterrupt:
+            sys.exit(130)
+
+
+# HEVC encoders to try when video_codec = "auto", best first. Hardware ones need the matching graphics card.
+AUTO_ENCODERS = {"darwin": ["hevc_videotoolbox", "libx265"], "other": ["hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265"]}
+_encoder_ok: dict[str, bool] = {}
+
+
+def encoder_args(codec: str) -> list[str]:
+    """Settings that depend on the encoder: 10-bit HEVC everywhere, each in the pixel format it takes."""
+    if "hevc" not in codec and codec != "libx265":
+        return ["-c:v", codec]
+    args = ["-c:v", codec, "-tag:v", "hvc1", "-profile:v", "main10"]
+    args += ["-pix_fmt", "yuv420p10le"] if codec == "libx265" else ["-pix_fmt", "p010le"]
+    if codec == "hevc_nvenc":
+        args += ["-preset", "p6"]
+    elif codec == "libx265":
+        args += ["-preset", "medium", "-x265-params", "log-level=error"]
+    return args
+
+
+def encoder_works(codec: str) -> bool:
+    """ffmpeg lists hardware encoders whether or not the hardware is there, so encode one frame to find out."""
+    if codec not in _encoder_ok:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=640x360:d=0.1",
+                            "-frames:v", "1", *encoder_args(codec), "-b:v", "1M", "-f", "null", "-"],
+                           capture_output=True, text=True)
+        _encoder_ok[codec] = r.returncode == 0
+    return _encoder_ok[codec]
+
+
+def video_codec(R: dict) -> str:
+    """The encoder to render with: VT_VIDEO_CODEC, else [render] video_codec, where "auto" picks the first that works."""
+    codec = os.environ.get("VT_VIDEO_CODEC", "").strip() or R.get("video_codec", "auto")
+    if codec != "auto":
+        return codec
+    for c in AUTO_ENCODERS["darwin" if sys.platform == "darwin" else "other"]:
+        if encoder_works(c):
+            return c
+    die("no HEVC encoder works with this ffmpeg - set video_codec under [render] in config.toml (e.g. libx264)")
 
 
 def resolve_job(job: str) -> Path:
@@ -1088,13 +1138,11 @@ def cmd_render(a):
 
     # video segments
     base = A["video"]["path"]
-    vcodec = R["video_codec"]
+    vcodec = video_codec(R)
     W, H = render_size(*video_size(Path(base)))  # same size as the source: 1080p stays 1080p, 4K stays 4K
     vbr = scaled_bitrate(R["video_bitrate"], W, H)
-    log(f"{a.lang}: rendering at {W}x{H}, {vbr}", stage="render", lang=a.lang)
-    venc = ["-c:v", vcodec, "-b:v", vbr, "-tag:v", "hvc1"] if "hevc" in vcodec else ["-c:v", vcodec, "-b:v", vbr]
-    if "hevc" in vcodec:
-        venc += ["-profile:v", "main10", "-pix_fmt", "p010le"]
+    log(f"{a.lang}: rendering at {W}x{H}, {vbr}, {vcodec}", stage="render", lang=a.lang)
+    venc = [*encoder_args(vcodec), "-b:v", vbr]
     venc += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
     lst = []
     for s in plan["segments"]:
@@ -1102,7 +1150,7 @@ def cmd_render(a):
         vf = f"setpts=(PTS-STARTPTS)/{s['speed']:.5f},fps={fps},scale={W}:{H},tpad=stop_mode=clone:stop_duration=1"
         sh(["ffmpeg", "-y", "-v", "error", "-ss", f"{s['src_start']:.4f}", "-t", f"{s['src_len'] + 0.1:.4f}",
             "-i", base, "-an", "-vf", vf, "-frames:v", str(s["frames"]), *venc, str(f)])
-        lst.append(f"file '{f}'")
+        lst.append(f"file '{f.as_posix()}'")  # forward slashes: ffmpeg takes them on Windows too
         log(None, stage="render", lang=a.lang, done=s["seg"] + 1, total=len(plan["segments"]))
     (seg_dir / "list.txt").write_text("\n".join(lst) + "\n")
     P["out"].mkdir(exist_ok=True)
@@ -1235,6 +1283,7 @@ def cmd_run(a):
 
 
 def main():
+    ensure_utf8_mode()
     load_env()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)

@@ -48,7 +48,7 @@ If a cut is detected wrong, or you want a sync point inside a clip (e.g. the mom
 - **Change the default languages:** create `config.toml` in your jobs folder with one line, e.g. `languages = ["en", "es", "fr", "pt"]`.
 - **ElevenLabs model, fitting limits, encoder:** copy [config.default.toml](config.default.toml) to `config.toml` in your jobs folder and keep only the keys you change.
 - **A different voice for one language:** add `ELEVENLABS_VOICE_ID_DE=...` (etc.) to a `.env` file in your jobs folder.
-- Rendering uses `hevc_videotoolbox` (macOS). On other systems set `video_codec = "libx265"` under `[render]`.
+- Rendering picks an HEVC encoder that works on this computer: VideoToolbox on a Mac; on Windows or Linux an NVIDIA, Intel or AMD graphics card, else `libx265` (slow, on the CPU). To choose one yourself, set `video_codec` under `[render]`, e.g. `video_codec = "hevc_nvenc"`.
 
 ## Without Claude Code
 `scripts/vt.py` also runs on its own, with the Claude API doing the translation instead of Claude Code. It reads the keys from a `.env` file in your jobs folder (see [.env.example](.env.example)): `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` and `ANTHROPIC_API_KEY`.

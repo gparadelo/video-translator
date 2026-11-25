@@ -39,6 +39,6 @@ fix_rounds = 3         # times Claude may rewrite beats that don't fit before re
 fix_names = true       # after transcribing, let Claude fix misspelled names (uses reference.txt / script_*.txt)
 
 [render]
-video_codec = "hevc_videotoolbox"
+video_codec = "auto"      # auto: VideoToolbox on a Mac; on Windows/Linux NVIDIA, Intel, AMD, then libx265 (CPU)
 video_bitrate = "20M"    # for 4K; scaled down for smaller sources (1080p ~7M). Output keeps the source size
 audio_bitrate = "192k"

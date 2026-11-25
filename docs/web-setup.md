@@ -1,7 +1,7 @@
 # Web app setup
 
 The web app has three parts: the site in [web/](../web) (Next.js), a Supabase project (login and database),
-and a Cloudflare R2 bucket (the videos). A worker on a Mac does the actual translating; it comes later.
+and a Cloudflare R2 bucket (the videos). A worker on a Mac or Windows PC does the actual translating; it comes later.
 
 ## 1. Supabase
 1. Create a project at supabase.com (the free plan is enough).
@@ -58,22 +58,41 @@ pnpm dev                       # http://localhost:3000
 To put it online: import the repository in Vercel, set Root Directory to `web`, and add the same settings
 as environment variables.
 
-## 4. The worker (on the Mac that renders)
+## 4. The worker (on the Mac or Windows PC that renders)
 The worker asks the database for jobs, downloads the video, runs the pipeline and uploads the results.
-It only makes outgoing connections, so nothing on the Mac is exposed to the internet.
+It only makes outgoing connections, so nothing on the computer is exposed to the internet. You can run more
+than one (say a Mac and a Windows PC): each job is taken by one of them.
 
-1. `cp worker/.env.example worker/.env` and fill it in: the Supabase URL and **secret** key, the same R2
-   values as the web app, and the same `SECRETS_KEY`. It has no ElevenLabs or Claude keys of its own: each job
-   runs on its owner's keys from Settings, and any such keys left in `worker/.env` are ignored.
-2. Try it in a terminal first: `uv run worker/worker.py` (stop it with Ctrl-C).
-3. Make it start at login and restart if it stops: `worker/install-service.sh`
-   (`worker/install-service.sh remove` undoes it). Its log is `~/Library/Logs/video-translator-worker.log`.
+1. Install the tools. Mac: `brew install ffmpeg uv git`. Windows, in PowerShell:
+   `winget install Gyan.FFmpeg astral-sh.uv Git.Git`, then open a new PowerShell so they're on the PATH.
+2. Clone this repository and `cp worker/.env.example worker/.env` (Windows: `copy worker\.env.example worker\.env`).
+   Fill it in: the Supabase URL and **secret** key, the same R2 values as the web app, and the same
+   `SECRETS_KEY`. It has no ElevenLabs or Claude keys of its own: each job runs on its owner's keys from
+   Settings, and any such keys left in `worker/.env` are ignored.
+3. Try it in a terminal first: `uv run worker/worker.py` (stop it with Ctrl-C). It starts by saying which
+   video encoder it will use (see below).
+4. Make it start at login and restart if it stops:
+   - Mac: `worker/install-service.sh` (`worker/install-service.sh remove` undoes it). Log:
+     `~/Library/Logs/video-translator-worker.log`.
+   - Windows: `powershell -ExecutionPolicy Bypass -File worker\install-service.ps1` (add `remove` to undo it).
+     It adds a task "Video Translator Worker" to Task Scheduler that starts, hidden, when you sign in. Log:
+     `%LOCALAPPDATA%\Video Translator Worker\worker.log`. It runs only while you're signed in, so set Windows
+     to sign in automatically if the PC restarts by itself (e.g. after updates).
+5. After `git pull`, restart it: run the install script again (it stops the old one first).
 
 Things to know:
-- While a job runs the worker keeps the Mac awake. It can't wake a sleeping Mac: to pick up jobs while you're
-  away, set the Mac to stay awake when plugged in (System Settings -> Battery -> Options, or Energy).
-- Job folders live in `~/Library/Application Support/Video Translator Worker` for 7 days, so re-running a
-  language reuses the voice audio. The 4K outputs are deleted from the Mac once uploaded.
+- **Sleep.** While a job runs the worker keeps the computer awake, but it can't wake a sleeping one. To pick
+  up jobs while you're away: Mac, System Settings -> Battery -> Options (or Energy): stay awake when plugged
+  in. Windows, Settings -> System -> Power: "When plugged in, put my device to sleep after" Never (or
+  `powercfg /change standby-timeout-ac 0`).
+- **Encoder.** Videos come out as 10-bit HEVC. With `video_codec = "auto"` (the default) the worker uses
+  VideoToolbox on a Mac; on Windows the first that works of an NVIDIA (`hevc_nvenc`), Intel (`hevc_qsv`) or
+  AMD (`hevc_amf`) graphics card, else `libx265` on the CPU, which works everywhere but is several times
+  slower at 4K. To choose one, put `VT_VIDEO_CODEC=hevc_nvenc` (etc.) in `worker/.env`. If a hardware
+  encoder fails, update the graphics driver.
+- Job folders live for 7 days (Mac: `~/Library/Application Support/Video Translator Worker`, Windows:
+  `%LOCALAPPDATA%\Video Translator Worker`), so re-running a language reuses the voice audio. The 4K outputs
+  are deleted once uploaded.
 - If the worker dies mid-job, the job goes back to the queue after two minutes; after three such tries it
   is marked failed.
 - One language failing doesn't stop the others: it is marked failed with the reason, and the job finishes.
