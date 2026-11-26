@@ -104,7 +104,7 @@ function JobView() {
       {error && <Notice tone="bad">{error}</Notice>}
       {(waiting || working) && !online && (
         <Notice tone="action">
-          The render Mac is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
+          The renderer is offline. This video will {working ? "continue" : "start"} when it&apos;s back on.
         </Notice>
       )}
 
@@ -116,7 +116,7 @@ function JobView() {
         <Card className="flex flex-col gap-2">
           <p className="font-medium">
             {waiting
-              ? "Waiting for the render Mac to pick this up…"
+              ? "Waiting for the renderer to pick this up…"
               : (progressText(job.progress) ?? (job.status === "preparing" ? "Transcribing…" : "Translating…"))}
             {working && job.progress?.lang && ` (${langName(job.progress.lang)})`}
           </p>
