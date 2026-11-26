@@ -96,25 +96,52 @@ class Canceled(Exception):
 
 # ----------------------------------------------------------------------------- database (Supabase REST)
 
+def why(e: Exception) -> str:
+    """The useful end of a requests error: "can't look up the address" says more than "ConnectionError"."""
+    text = str(e)
+    if "NameResolutionError" in text or "getaddrinfo" in text or "Name or service not known" in text:
+        return "can't look up the database's address - no internet, or the computer just woke up"
+    if isinstance(e, requests.Timeout):
+        return "no answer within 30 s"
+    inner = e
+    while inner.__cause__ or inner.__context__ or (inner.args and isinstance(inner.args[0], Exception)):
+        inner = inner.__cause__ or inner.__context__ or inner.args[0]
+    return f"{type(e).__name__}: {str(inner)[:160]}"
+
+
 class Database:
     def __init__(self):
         self.url = need("SUPABASE_URL").rstrip("/")
-        key = need("SUPABASE_SECRET_KEY")
-        self.s = requests.Session()
-        self.s.headers.update({"apikey": key, "Authorization": f"Bearer {key}"})
+        self.key = need("SUPABASE_SECRET_KEY")
+        self.s = self.new_session()
+        self.failing_since: float | None = None
+
+    def new_session(self) -> requests.Session:
+        s = requests.Session()
+        s.headers.update({"apikey": self.key, "Authorization": f"Bearer {self.key}"})
+        return s
 
     def send(self, method: str, path: str, **kw) -> requests.Response:
         """One request, retried when the connection drops. The server closes connections that sat idle
-        (e.g. during a long render or upload), and requests only finds out when it reuses one."""
+        (e.g. during a long render or upload), and requests only finds out when it reuses one. A laptop that
+        slept or changed Wi-Fi also leaves dead connections behind, so each retry starts a brand-new session."""
         for attempt in range(4):
             try:
-                return self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
+                r = self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
             except (requests.ConnectionError, requests.Timeout) as e:
+                self.s.close()
+                self.s = self.new_session()
+                if self.failing_since is None:
+                    self.failing_since = time.time()
                 if attempt == 3:
                     raise
-                say(f"database connection dropped ({type(e).__name__}), retrying...")
-                self.s.close()  # drop the dead pooled connections; the next request opens a new one
+                say(f"database connection dropped ({why(e)}), retrying...")
                 time.sleep(2 * (attempt + 1))
+                continue
+            if self.failing_since is not None:
+                say(f"database reachable again (after {round(time.time() - self.failing_since)} s)")
+                self.failing_since = None
+            return r
 
     def rpc(self, fn: str, **args):
         r = self.send("POST", f"/rest/v1/rpc/{fn}", json=args)
@@ -375,9 +402,30 @@ class Job:
                 awake.terminate()
 
 
+class _WindowsAwake:
+    """Windows' version of caffeinate: tells it not to sleep until terminate() (same thread)."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+    def __init__(self):
+        import ctypes
+        self.k = ctypes.windll.kernel32
+        self.k.SetThreadExecutionState(self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED)
+
+    def terminate(self):
+        self.k.SetThreadExecutionState(self.ES_CONTINUOUS)
+
+
 def keep_awake():
-    """Stop the Mac from going to sleep while a job runs (WORKER_KEEP_AWAKE=off to disable)."""
-    if os.environ.get("WORKER_KEEP_AWAKE", "job") == "off" or not shutil.which("caffeinate"):
+    """Stop the computer from going to sleep while a job runs (WORKER_KEEP_AWAKE=off to disable)."""
+    if os.environ.get("WORKER_KEEP_AWAKE", "job") == "off":
+        return None
+    if sys.platform == "win32":
+        try:
+            return _WindowsAwake()
+        except Exception as e:
+            say(f"couldn't keep Windows awake during the job: {e}")
+            return None
+    if not shutil.which("caffeinate"):
         return None
     return subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
 
@@ -423,7 +471,8 @@ def main():
         try:
             row = db.rpc("worker_claim", p_worker=worker_id, p_lease_seconds=LEASE_SECONDS, p_version=VERSION)
         except Exception as e:
-            say(f"couldn't reach the database: {e}")
+            say(f"couldn't reach the database ({why(e)}); trying again in {POLL_SECONDS} s"
+                if isinstance(e, (requests.ConnectionError, requests.Timeout)) else f"couldn't reach the database: {e}")
             row = None
         if row and row.get("id"):
             Job(db, store, worker_id, root, row, master).run()
