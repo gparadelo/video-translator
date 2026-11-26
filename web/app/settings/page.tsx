@@ -9,6 +9,8 @@ import { createClient } from "@/lib/supabase/client";
 
 const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base font-normal dark:border-neutral-700";
 const link = "underline underline-offset-2";
+// Affiliate link (disclosed next to it on the page).
+const ELEVENLABS_SIGNUP = "https://try.elevenlabs.io/yn7pyf0ztfla";
 
 type Saved = { status: SetupStatus; notes: string[] };
 
@@ -85,6 +87,44 @@ export default function Settings() {
       <form onSubmit={submit} className="flex flex-col gap-5">
         <Card className="flex flex-col gap-4">
           <h2 className="font-medium">ElevenLabs</h2>
+          <Steps
+            title="New to ElevenLabs? Set it up step by step"
+            open={!!status && !status.elevenlabs_hint}
+            footer={
+              <>
+                The sign-up link is an affiliate link: if you subscribe through it, the maker of Video Translator earns a
+                commission, at no extra cost to you. You can also go straight to{" "}
+                <a className={link} href="https://elevenlabs.io" target="_blank" rel="noreferrer">
+                  elevenlabs.io
+                </a>
+                .
+              </>
+            }
+          >
+            <li>
+              <a className={link} href={ELEVENLABS_SIGNUP} target="_blank" rel="noreferrer sponsored">
+                Sign up for ElevenLabs
+              </a>{" "}
+              and choose a plan. Each plan comes with monthly credits, and every translated video uses some of them.
+            </li>
+            <li>
+              Make your voice: open <b>Voices</b>, choose <b>Create a voice</b> (or <b>Add a new voice</b>) →{" "}
+              <b>Instant Voice Clone</b>, and upload or record a minute or two of yourself speaking clearly. Or pick a
+              voice from the library.
+            </li>
+            <li>
+              In <b>Voices</b>, open your voice and copy its <b>Voice ID</b>. Paste it below.
+            </li>
+            <li>
+              Open{" "}
+              <a className={link} href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noreferrer">
+                Developers → API keys
+              </a>
+              , choose <b>Create key</b>, and allow <b>Text to Speech</b>, <b>Speech to Text</b> and{" "}
+              <b>Forced Alignment</b> (plus <b>Voices: Read</b> so the voice ID can be checked here). Copy the key: it
+              is shown only once. Paste it below.
+            </li>
+          </Steps>
           <KeyField
             label="API key"
             value={eleven}
@@ -145,6 +185,35 @@ export default function Settings() {
 
         <Card className="flex flex-col gap-4">
           <h2 className="font-medium">Claude</h2>
+          <Steps title="New to the Claude API? Set it up step by step" open={!!status && !status.anthropic_hint}>
+            <li>
+              <a className={link} href="https://platform.claude.com" target="_blank" rel="noreferrer">
+                Sign up at platform.claude.com
+              </a>{" "}
+              (the Claude Developer Platform).{" "}
+              <b>
+                A Claude.ai subscription (Free, Pro or Max) does not work here: the API is a separate account with its
+                own billing.
+              </b>{" "}
+              Even if you already pay for Claude.ai, you need to add API credits in the next step.
+            </li>
+            <li>
+              Add credits: open{" "}
+              <a className={link} href="https://platform.claude.com/settings/billing" target="_blank" rel="noreferrer">
+                Settings → Billing
+              </a>{" "}
+              and buy some prepaid credits. A few dollars goes a long way: translating a voiceover or a title costs
+              cents. You can turn on auto-reload so it never runs out.
+            </li>
+            <li>
+              Open{" "}
+              <a className={link} href="https://platform.claude.com/settings/keys" target="_blank" rel="noreferrer">
+                Settings → API keys
+              </a>
+              , choose <b>Create key</b>, name it something like “Video Translator”, and copy it (it starts with{" "}
+              <span className="font-mono">sk-ant-</span> and is shown only once). Paste it below.
+            </li>
+          </Steps>
           <KeyField
             label="API key"
             value={claude}
@@ -171,6 +240,17 @@ export default function Settings() {
         </Button>
       </form>
     </Page>
+  );
+}
+
+/** Step-by-step sign-up instructions, open until that key is saved. */
+function Steps(props: { title: string; open: boolean; footer?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <details open={props.open} className="rounded-lg bg-neutral-50 px-4 py-3 text-sm dark:bg-neutral-900">
+      <summary className="cursor-pointer font-medium">{props.title}</summary>
+      <ol className="mt-3 flex list-decimal flex-col gap-2 pl-5">{props.children}</ol>
+      {props.footer && <p className="mt-3 text-xs text-neutral-500">{props.footer}</p>}
+    </details>
   );
 }
 
