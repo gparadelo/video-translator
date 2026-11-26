@@ -15,7 +15,7 @@ const ELEVENLABS_SIGNUP = "https://try.elevenlabs.io/yn7pyf0ztfla";
 type Saved = { status: SetupStatus; notes: string[] };
 
 // Settings: the person's own ElevenLabs and Claude API keys, and their voice. Their projects use these,
-// so what they make is spoken in their voice and billed to their accounts. Saved keys never come back to
+// so what they make is spoken in the voice they chose and billed to their accounts. Saved keys never come back to
 // the browser: only their last 4 characters, to tell which one is saved.
 export default function Settings() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
@@ -78,7 +78,7 @@ export default function Settings() {
     <Page>
       <h1 className="text-xl font-semibold">Settings</h1>
       <p className="-mt-3 text-sm text-neutral-500">
-        Your projects use your own ElevenLabs and Claude accounts: the voice is yours, and so are the costs.
+        Your projects use your own ElevenLabs and Claude accounts: the voice is your pick, and the costs are yours.
       </p>
       {status && missing.length > 0 && (
         <Notice tone="action">Add {listOf(missing)} to start translating videos.</Notice>
@@ -108,12 +108,7 @@ export default function Settings() {
               and choose a plan. Each plan comes with monthly credits, and every translated video uses some of them.
             </li>
             <li>
-              Make your voice: open <b>Voices</b>, choose <b>Create a voice</b> (or <b>Add a new voice</b>) →{" "}
-              <b>Instant Voice Clone</b>, and upload or record a minute or two of yourself speaking clearly. Or pick a
-              voice from the library.
-            </li>
-            <li>
-              In <b>Voices</b>, open your voice and copy its <b>Voice ID</b>. Paste it below.
+              Choose a voice: open <b>Voices</b>, pick one you like, and copy its <b>Voice ID</b>. Paste it below.
             </li>
             <li>
               Open{" "}
@@ -153,7 +148,7 @@ export default function Settings() {
               className={`${field} font-mono text-sm`}
             />
             <span className="text-xs font-normal text-neutral-500">
-              In ElevenLabs, open <b>Voices</b>, pick your voice, and copy its ID. Every language is spoken in this voice.
+              In ElevenLabs, open <b>Voices</b>, pick a voice, and copy its ID. Every language is spoken in this voice.
             </span>
           </label>
           {showPerLang ? (
