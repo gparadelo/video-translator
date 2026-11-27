@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Page } from "@/components/Header";
-import { Card, Notice, Pill, StatusPill } from "@/components/ui";
+import { buttonClass, Card, Notice, PageTitle, Pill, StatusPill } from "@/components/ui";
 import { langName, type Job } from "@/lib/jobs";
 import { listOf, missingFor, toStatus } from "@/lib/setup";
 import { createClient } from "@/lib/supabase/client";
@@ -26,11 +26,9 @@ export default function Home() {
   return (
     <Page>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Your projects</h1>
-        <Link
-          href="/new"
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
-        >
+        <PageTitle>Your projects</PageTitle>
+        <Link href="/new" className={buttonClass()}>
+          <span aria-hidden className="-ml-0.5 text-base leading-none">+</span>
           New project
         </Link>
       </div>
@@ -47,14 +45,16 @@ export default function Home() {
 
       {jobs === null && <p className="text-sm text-neutral-500">Loading…</p>}
       {jobs?.length === 0 && (
-        <Card className="text-sm text-neutral-500">Nothing here yet. Start a project to translate a video, a title, or both.</Card>
+        <Card className="border-dashed py-10 text-center text-sm text-neutral-500 shadow-none">
+          Nothing here yet. Start a project to translate a video, a title, or both.
+        </Card>
       )}
       <ul className="flex flex-col gap-2">
         {jobs?.map((j) => (
           <li key={j.id}>
             <Link
               href={`/jobs/${j.id}`}
-              className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-4 py-3 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"
+              className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200/80 bg-surface px-4 py-3.5 shadow-sm transition hover:-translate-y-px hover:border-neutral-300 hover:shadow-md dark:border-neutral-800 dark:shadow-none dark:hover:border-neutral-700"
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium">{j.name}</span>

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
 import { TitleLanguage } from "@/components/Titles";
-import { Bar, Button, Card, Notice } from "@/components/ui";
+import { Bar, Button, Card, Notice, PageTitle } from "@/components/ui";
 import Link from "next/link";
 import { api, megabytes, uploadVideo, type Job } from "@/lib/jobs";
 import { listOf, missingFor, toStatus, type SetupStatus } from "@/lib/setup";
@@ -88,8 +88,7 @@ export default function NewProject() {
   const ready = (file || title.trim()) && projectName && languages.length > 0 && !missing.length;
   return (
     <Page>
-      <h1 className="text-xl font-semibold">New project</h1>
-      <p className="-mt-3 text-sm text-neutral-500">Translate a video, a title, or both. Each part is optional.</p>
+      <PageTitle sub="Translate a video, a title, or both. Each part is optional.">New project</PageTitle>
       <form onSubmit={start} className="flex flex-col gap-5">
         <Card className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5 text-sm font-medium">
@@ -101,7 +100,7 @@ export default function NewProject() {
               accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
               disabled={busy}
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="rounded-lg border border-dashed border-neutral-300 p-4 text-sm font-normal file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:border-neutral-700 dark:file:bg-neutral-700"
+              className="cursor-pointer rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 p-5 text-sm transition-colors hover:border-accent dark:bg-neutral-900 font-normal file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:border-neutral-700 dark:file:bg-neutral-700"
             />
             <span className="text-xs font-normal text-neutral-500">
               The finished video with its voiceover, as .mp4 or .mov, up to 5 GB.

@@ -6,7 +6,7 @@ import { Suspense, useState } from "react";
 import { Page } from "@/components/Header";
 import { LanguagePicker } from "@/components/LanguagePicker";
 import { TitlesCard } from "@/components/Titles";
-import { Bar, Button, Card, Notice, Pill, StatusPill } from "@/components/ui";
+import { Bar, Button, buttonClass, Card, Notice, Pill, StatusPill } from "@/components/ui";
 import {
   api,
   langName,
@@ -68,7 +68,7 @@ function JobView() {
     return (
       <Page>
         <p>This project doesn&apos;t exist (or isn&apos;t yours).</p>
-        <Link href="/" className="underline">Back to your projects</Link>
+        <Link href="/" className="self-start text-sm underline">Back to your projects</Link>
       </Page>
     );
   }
@@ -76,7 +76,7 @@ function JobView() {
   if (!job.has_video) {
     return (
       <Page>
-        <h1 className="min-w-0 truncate text-xl font-semibold">{job.name}</h1>
+        <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{job.name}</h1>
         <TitlesCard job={job} onSaved={refresh} />
       </Page>
     );
@@ -89,7 +89,7 @@ function JobView() {
   return (
     <Page>
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="min-w-0 truncate text-xl font-semibold">{job.name}</h1>
+        <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{job.name}</h1>
         <StatusPill status={job.status} />
         {(waiting || working || job.status === "needs_review" || job.status === "uploading") && (
           <button
@@ -187,7 +187,7 @@ function FinishUpload({ job, onDone }: { job: Job; onDone: () => Promise<void> }
             type="file"
             accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
             onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-            className="mt-2 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 dark:file:bg-neutral-700"
+            className="mt-2 block text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-neutral-900 file:px-3 file:py-1.5 file:text-white dark:file:bg-neutral-100 dark:file:text-neutral-900"
           />
         </label>
       ) : (
@@ -296,7 +296,7 @@ function Outputs({ job, outputs }: { job: Job; outputs: Output[] }) {
           {o.status === "done" && o.output_key && (
             <a
               href={`/api/jobs/${job.id}/files/${o.lang}`}
-              className="self-start rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              className={`${buttonClass("plain")} self-start`}
             >
               Download{o.output_bytes ? ` · ${megabytes(o.output_bytes)}` : ""}
             </a>

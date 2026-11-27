@@ -1,21 +1,28 @@
 @import "tailwindcss";
 
+/* A soft grey page so white cards sit on top of it. */
 :root {
-  --background: #ffffff;
+  --background: #f6f6f4;
   --foreground: #171717;
+  --surface: #ffffff;
+  --accent: #2563eb;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #0b0b0c;
     --foreground: #ededed;
+    --surface: #161618;
+    --accent: #60a5fa;
   }
 }
 
@@ -23,4 +30,40 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+@layer base {
+  /* Text fields, selects and the transcript boxes: one look and one focus ring everywhere. */
+  input:not([type="checkbox"], [type="radio"], [type="file"]),
+  textarea,
+  select {
+    transition:
+      border-color 120ms,
+      box-shadow 120ms;
+  }
+  input:not([type="checkbox"], [type="radio"], [type="file"]):focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-neutral-400);
+  }
+  a,
+  button,
+  summary,
+  label:has(> input.sr-only) {
+    &:focus-visible,
+    &:has(> input.sr-only:focus-visible) {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  }
 }

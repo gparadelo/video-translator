@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Page } from "@/components/Header";
-import { Button, Card, Notice } from "@/components/ui";
+import { Button, Card, Notice, PageTitle } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
 
 const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base font-normal dark:border-neutral-700";
@@ -33,7 +33,7 @@ export default function ResetPassword() {
 
   return (
     <Page>
-      <h1 className="text-xl font-semibold">Choose a new password</h1>
+      <PageTitle>Choose a new password</PageTitle>
       <Card className="flex flex-col gap-4">
         {done ? (
           <>

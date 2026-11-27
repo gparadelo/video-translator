@@ -11,8 +11,9 @@ and a Cloudflare R2 bucket (the videos). A worker on a Mac does the actual trans
    **Email** provider on (email + password). Anyone can create an account; projects run on their own keys
    (below), so that costs you nothing.
    - **Confirm email:** with it on, a new person must open a link we email them before they can sign in.
-     Supabase's built-in email sender only sends a few emails an hour, so for more than a handful of
-     sign-ups either turn **Confirm email** off or add your own SMTP (Authentication -> Emails -> SMTP).
+     Supabase's built-in email sender only sends to the email addresses of your Supabase team members, and
+     only a couple an hour. Anyone else gets no email and can't sign in. So with open sign-up either turn
+     **Confirm email** off or add your own SMTP (Authentication -> Emails -> SMTP).
      Password-reset emails use the same sender.
 4. **Email links:** Authentication -> URL Configuration. Set Site URL to the app's address, and add
    `http://localhost:3000/**` and `https://YOUR-APP/**` to Redirect URLs (the reset link carries

@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Logo } from "@/components/Header";
+import { Button, Card, Notice } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup" | "forgot";
@@ -64,79 +66,80 @@ export function LoginForm({ linkError }: { linkError: string }) {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Video Translator</h1>
-        <p className="mt-1 text-sm text-neutral-500">{TITLES[mode]}</p>
-      </div>
-      {sent ? (
-        <div className="flex flex-col gap-3">
-          <p>{sent}</p>
-          <button type="button" className="self-start text-sm underline" onClick={() => (setSent(""), switchTo("signin"))}>
-            Back to sign in
-          </button>
+    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center gap-6 p-6">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <Logo className="h-11 w-11" />
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Video Translator</h1>
+          <p className="mt-1 text-sm text-neutral-500">{TITLES[mode]}</p>
         </div>
-      ) : (
-        <form onSubmit={submit} className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-sm">
-            Email
-            <input
-              type="email"
-              required
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="rounded border border-neutral-400 bg-transparent px-3 py-2 text-base"
-            />
-          </label>
-          {mode !== "forgot" && (
-            <label className="flex flex-col gap-1 text-sm">
-              Password
+      </div>
+      <Card className="flex flex-col gap-4 p-6">
+        {sent ? (
+          <div className="flex flex-col gap-3">
+            <p>{sent}</p>
+            <button type="button" className="self-start text-sm underline" onClick={() => (setSent(""), switchTo("signin"))}>
+              Back to sign in
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Email
               <input
-                type="password"
+                type="email"
                 required
-                minLength={mode === "signup" ? 8 : undefined}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="rounded border border-neutral-400 bg-transparent px-3 py-2 text-base"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base dark:border-neutral-700"
               />
-              {mode === "signup" && <span className="text-xs text-neutral-500">At least 8 characters.</span>}
             </label>
-          )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded bg-neutral-900 px-3 py-2 text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
-          >
-            {BUTTONS[mode][busy ? 1 : 0]}
-          </button>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <div className="flex flex-col gap-1 text-sm text-neutral-600 dark:text-neutral-400">
-            {mode === "signin" && (
-              <>
+            {mode !== "forgot" && (
+              <label className="flex flex-col gap-1.5 text-sm font-medium">
+                Password
+                <input
+                  type="password"
+                  required
+                  minLength={mode === "signup" ? 8 : undefined}
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base dark:border-neutral-700"
+                />
+                {mode === "signup" && <span className="text-xs font-normal text-neutral-500">At least 8 characters.</span>}
+              </label>
+            )}
+            <Button type="submit" disabled={busy} className="mt-1 w-full">
+              {BUTTONS[mode][busy ? 1 : 0]}
+            </Button>
+            {error && <Notice tone="bad">{error}</Notice>}
+            <div className="flex flex-col gap-1 border-t border-neutral-200 pt-4 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-400">
+              {mode === "signin" && (
+                <>
+                  <p>
+                    New here?{" "}
+                    <button type="button" className="underline" onClick={() => switchTo("signup")}>
+                      Create an account
+                    </button>
+                  </p>
+                  <button type="button" className="self-start underline" onClick={() => switchTo("forgot")}>
+                    Forgot your password?
+                  </button>
+                </>
+              )}
+              {mode !== "signin" && (
                 <p>
-                  New here?{" "}
-                  <button type="button" className="underline" onClick={() => switchTo("signup")}>
-                    Create an account
+                  {mode === "signup" ? "Already have an account? " : ""}
+                  <button type="button" className="underline" onClick={() => switchTo("signin")}>
+                    {mode === "signup" ? "Sign in" : "Back to sign in"}
                   </button>
                 </p>
-                <button type="button" className="self-start underline" onClick={() => switchTo("forgot")}>
-                  Forgot your password?
-                </button>
-              </>
-            )}
-            {mode !== "signin" && (
-              <p>
-                {mode === "signup" ? "Already have an account? " : ""}
-                <button type="button" className="underline" onClick={() => switchTo("signin")}>
-                  {mode === "signup" ? "Sign in" : "Back to sign in"}
-                </button>
-              </p>
-            )}
-          </div>
-        </form>
-      )}
+              )}
+            </div>
+          </form>
+        )}
+      </Card>
     </main>
   );
 }

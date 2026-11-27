@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Page } from "@/components/Header";
-import { Button, Card, Notice } from "@/components/ui";
+import { Button, Card, Notice, PageTitle } from "@/components/ui";
 import { api, langName } from "@/lib/jobs";
 import { listOf, missingFor, toStatus, type SetupStatus } from "@/lib/setup";
 import { createClient } from "@/lib/supabase/client";
@@ -76,10 +76,9 @@ export default function Settings() {
   const missing = missingFor(status, { video: true, title: true });
   return (
     <Page>
-      <h1 className="text-xl font-semibold">Settings</h1>
-      <p className="-mt-3 text-sm text-neutral-500">
-        Your projects use your own ElevenLabs and Claude accounts: the voice is your pick, and the costs are yours.
-      </p>
+      <PageTitle sub="Your projects use your own ElevenLabs and Claude accounts: the voice is your pick, and the costs are yours.">
+        Settings
+      </PageTitle>
       {status && missing.length > 0 && (
         <Notice tone="action">Add {listOf(missing)} to start translating videos.</Notice>
       )}
@@ -241,7 +240,7 @@ export default function Settings() {
 /** Step-by-step sign-up instructions, open until that key is saved. */
 function Steps(props: { title: string; open: boolean; footer?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <details open={props.open} className="rounded-lg bg-neutral-50 px-4 py-3 text-sm dark:bg-neutral-900">
+    <details open={props.open} className="rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
       <summary className="cursor-pointer font-medium">{props.title}</summary>
       <ol className="mt-3 flex list-decimal flex-col gap-2 pl-5">{props.children}</ol>
       {props.footer && <p className="mt-3 text-xs text-neutral-500">{props.footer}</p>}

@@ -22,10 +22,10 @@ export function LanguagePicker({
       {shown.map((l) => (
         <label
           key={l}
-          className={`cursor-pointer rounded-full border px-3 py-1 text-sm select-none ${
+          className={`cursor-pointer rounded-full border px-3 py-1 text-sm transition-colors select-none ${
             value.includes(l)
               ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-              : "border-neutral-300 dark:border-neutral-700"
+              : "border-neutral-300 bg-surface hover:border-neutral-500 dark:border-neutral-700 dark:hover:border-neutral-500"
           }`}
         >
           <input type="checkbox" className="sr-only" checked={value.includes(l)} onChange={() => toggle(l)} />
