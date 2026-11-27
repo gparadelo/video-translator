@@ -399,7 +399,9 @@ def main():
     a = ap.parse_args()
 
     load_env_file(HERE / ".env")
-    root = Path(os.environ.get("VT_WORKER_DIR") or "~/Library/Application Support/Video Translator Worker").expanduser()
+    default_root = (Path(os.environ.get("LOCALAPPDATA") or "~/AppData/Local") / "Video Translator Worker"
+                    if sys.platform == "win32" else Path("~/Library/Application Support/Video Translator Worker"))
+    root = Path(os.environ.get("VT_WORKER_DIR") or default_root).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     os.environ["VT_JOBS_DIR"] = str(root)  # a config.toml there applies to every job
     vt.load_env()

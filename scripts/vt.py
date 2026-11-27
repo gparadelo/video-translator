@@ -167,7 +167,7 @@ def config(job: Path | None = None) -> dict:
 def check_tools():
     for t in ("ffmpeg", "ffprobe"):
         if not shutil.which(t):
-            die(f"{t} not found - install it with `brew install ffmpeg`")
+            die(f"{t} not found - install ffmpeg (`winget install ffmpeg` on Windows, `brew install ffmpeg` on macOS)")
 
 
 def resolve_job(job: str) -> Path:
@@ -1092,10 +1092,8 @@ def cmd_render(a):
     W, H = render_size(*video_size(Path(base)))  # same size as the source: 1080p stays 1080p, 4K stays 4K
     vbr = scaled_bitrate(R["video_bitrate"], W, H)
     log(f"{a.lang}: rendering at {W}x{H}, {vbr}", stage="render", lang=a.lang)
-    venc = ["-c:v", vcodec, "-b:v", vbr, "-tag:v", "hvc1"] if "hevc" in vcodec else ["-c:v", vcodec, "-b:v", vbr]
-    if "hevc" in vcodec:
-        venc += ["-profile:v", "main10", "-pix_fmt", "p010le"]
-    venc += ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+    vcodec = pick_encoder(vcodec, lang=a.lang)
+    venc = encoder_args(vcodec, vbr)
     lst = []
     for s in plan["segments"]:
         f = seg_dir / f"{s['seg']:03d}.mp4"
@@ -1112,6 +1110,47 @@ def cmd_render(a):
         "-af", f"volume={gain:.2f}dB,alimiter=limit=0.95:level=0", "-ac", "2",
         "-c:a", "aac", "-b:a", R["audio_bitrate"], "-movflags", "+faststart", "-t", f"{total:.4f}", str(out)])
     log(f"done: {out} ({media_duration(out):.2f}s)")
+
+
+# HEVC encoders to try, best first, when the configured one can't run on this machine
+# (hevc_videotoolbox is macOS only; the hardware ones need the matching GPU and driver).
+ENCODER_FALLBACKS = ("hevc_videotoolbox", "hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265", "libx264")
+_encoder_ok: dict[str, bool] = {}
+
+
+def encoder_args(vcodec: str, vbr: str) -> list[str]:
+    args = ["-c:v", vcodec, "-b:v", vbr]
+    if "hevc" in vcodec or vcodec == "libx265":
+        args += ["-tag:v", "hvc1", "-profile:v", "main10"]
+        # 10-bit input format: libx265 takes planar yuv420p10le, the hardware encoders p010le
+        args += ["-pix_fmt", "yuv420p10le" if vcodec == "libx265" else "p010le"]
+        if vcodec == "libx265":
+            args += ["-preset", "fast", "-x265-params", "log-level=error"]
+    else:
+        args += ["-pix_fmt", "yuv420p"]
+        if vcodec == "libx264":
+            args += ["-preset", "fast"]
+    return args + ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+
+
+def encoder_works(vcodec: str) -> bool:
+    """Encode a few tiny frames: an encoder can be listed by ffmpeg and still fail (no GPU, no driver)."""
+    if vcodec not in _encoder_ok:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=256x256:r=30:d=0.2",
+                            *encoder_args(vcodec, "1M"), "-f", "null", "-"], capture_output=True, text=True)
+        _encoder_ok[vcodec] = r.returncode == 0
+    return _encoder_ok[vcodec]
+
+
+def pick_encoder(wanted: str, lang: str | None = None) -> str:
+    if encoder_works(wanted):
+        return wanted
+    for c in ENCODER_FALLBACKS:
+        if c != wanted and encoder_works(c):
+            log(f"video encoder {wanted} isn't available on this machine - using {c}", stage="render", lang=lang)
+            return c
+    die(f"no working video encoder: tried {wanted}, {', '.join(c for c in ENCODER_FALLBACKS if c != wanted)}. "
+        "Install an ffmpeg build with libx265 (e.g. `winget install ffmpeg` or `brew install ffmpeg`).")
 
 
 def make_preview(video: Path, out: Path) -> Path:

@@ -80,7 +80,7 @@ It only makes outgoing connections, so nothing on the Mac is exposed to the inte
 Things to know:
 - While a job runs the worker keeps the Mac awake. It can't wake a sleeping Mac: to pick up jobs while you're
   away, set the Mac to stay awake when plugged in (System Settings -> Battery -> Options, or Energy).
-- Job folders live in `~/Library/Application Support/Video Translator Worker` for 7 days, so re-running a
+- Job folders live in `~/Library/Application Support/Video Translator Worker` (Windows: `%LOCALAPPDATA%\Video Translator Worker`) for 7 days, so re-running a
   language reuses the voice audio. The 4K outputs are deleted from the Mac once uploaded.
 - If the worker dies mid-job, the job goes back to the queue after two minutes; after three such tries it
   is marked failed.
