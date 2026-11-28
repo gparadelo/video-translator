@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { STATUS, workerOnline, type Job, type Worker } from "@/lib/jobs";
 import { createClient } from "@/lib/supabase/client";
 import { usePoll } from "@/lib/use-poll";
@@ -49,6 +49,15 @@ function GearIcon() {
 
 /** Left column on every signed-in screen: name, whether a renderer is on, your projects, and Settings at the bottom. */
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  // The current address is only known in the browser, so the column streams in after the page itself.
+  return (
+    <Suspense>
+      <SidebarContent onNavigate={onNavigate} />
+    </Suspense>
+  );
+}
+
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [supabase] = useState(createClient);
   const pathname = usePathname();
   const [polled, refresh] = usePoll(async () => {
