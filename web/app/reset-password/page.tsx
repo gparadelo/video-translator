@@ -8,8 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 
 const field = "rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-base font-normal dark:border-neutral-700";
 
-// Choose a new password. The reset email's link signs the person in and lands here; it's also where a
-// signed-in person changes their password (linked from Settings).
+// Choose a new password. The reset email's link signs the person in and lands here.
 export default function ResetPassword() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
