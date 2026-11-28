@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Page } from "@/components/Header";
+import { LanguagePicker } from "@/components/LanguagePicker";
 import { Button, Card, Notice, PageTitle } from "@/components/ui";
 import { api, langName } from "@/lib/jobs";
 import { listOf, missingFor, toStatus, type SetupStatus } from "@/lib/setup";
@@ -14,7 +15,7 @@ const ELEVENLABS_SIGNUP = "https://try.elevenlabs.io/yn7pyf0ztfla";
 
 type Saved = { status: SetupStatus; notes: string[] };
 
-// Settings: the person's own ElevenLabs and Claude API keys, and their voice. Their projects use these,
+// Settings: the person's default languages, their own ElevenLabs and Claude API keys, and their voice. Their projects use these,
 // so what they make is spoken in the voice they chose and billed to their accounts. Saved keys never come back to
 // the browser: only their last 4 characters, to tell which one is saved.
 export default function Settings() {
@@ -70,6 +71,7 @@ export default function Settings() {
       ...(claude.trim() && { anthropic_key: claude }),
       voice_id: voice,
       voice_ids: showPerLang ? perLang : {},
+      languages,
     });
   }
 
@@ -84,6 +86,14 @@ export default function Settings() {
       )}
 
       <form onSubmit={submit} className="flex flex-col gap-5">
+        <Card className="flex flex-col gap-3">
+          <h2 className="font-medium">Default languages</h2>
+          <LanguagePicker value={languages} onChange={setLanguages} />
+          <p className="text-xs text-neutral-500">
+            Every new project starts with these chosen. You can still change them for each project.
+          </p>
+        </Card>
+
         <Card className="flex flex-col gap-4">
           <h2 className="font-medium">ElevenLabs</h2>
           <Steps

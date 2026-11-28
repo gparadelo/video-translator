@@ -103,6 +103,10 @@ database fails every job.
 2. Change the Supabase settings in steps 3 and 4 of section 1 (sign-ups on, Confirm email, Redirect URLs).
 3. Deploy. Tell existing people to use "Forgot your password?" once to set a password.
 
+## Upgrading an existing setup to default languages in Settings
+1. Run `supabase/migrations/20261128000000_default_languages.sql`.
+2. Deploy. Until the migration runs, saving Settings fails with an error about `set_my_languages`.
+
 ## How a video moves through it
 1. `POST /api/jobs` creates the job and returns a signed link; the browser uploads the video straight to R2.
 2. `POST /api/jobs/<id>/submit` checks the upload arrived and queues the job.

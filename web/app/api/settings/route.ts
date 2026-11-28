@@ -8,8 +8,9 @@ import { getUser } from "@/lib/supabase/server";
 
 const VOICE = /^[A-Za-z0-9]{10,40}$/;
 
-// POST /api/settings  {elevenlabs_key?, anthropic_key?, voice_id?, voice_ids?}
-// Saves the person's API keys (checked, then encrypted) and voice. Each field: missing = keep what's saved,
+// POST /api/settings  {elevenlabs_key?, anthropic_key?, voice_id?, voice_ids?, languages?}
+// Saves the person's API keys (checked, then encrypted), voice, and default languages (what a new project starts
+// with). Each field: missing = keep what's saved,
 // "" (or {} for voice_ids) = remove it, anything else = replace it.
 // -> {status, notes}: what's saved now (keys only as their last characters), and anything worth telling.
 export async function POST(request: NextRequest) {
@@ -35,6 +36,13 @@ export async function POST(request: NextRequest) {
       voiceIds[lang] = id;
     }
   }
+  let languages: string[] | undefined;
+  if (body.languages !== undefined) {
+    if (!Array.isArray(body.languages)) return fail(400, "send the languages as a list");
+    languages = [...new Set(body.languages.map(str).filter((l): l is string => Boolean(l)))];
+    const unknown = languages.find((l) => !(l in LANGS));
+    if (unknown) return fail(400, `unknown language "${unknown}"`);
+  }
   if (voiceId && !VOICE.test(voiceId)) return fail(400, "that voice ID doesn't look right: copy it from the voice's page in ElevenLabs");
   if (eleven && eleven.length < 20) return fail(400, "that ElevenLabs key looks too short");
   if (claude && !claude.startsWith("sk-ant-")) return fail(400, "a Claude API key starts with sk-ant-");
@@ -57,6 +65,10 @@ export async function POST(request: NextRequest) {
 
     if (voiceId !== undefined || voiceIds !== undefined) {
       const { error } = await supabase.rpc("set_my_voice", { p_voice_id: voiceId ?? null, p_voice_ids: voiceIds ?? null });
+      if (error) return fail(400, error.message);
+    }
+    if (languages !== undefined) {
+      const { error } = await supabase.rpc("set_my_languages", { p_languages: languages });
       if (error) return fail(400, error.message);
     }
     if (eleven !== undefined || claude !== undefined) {
